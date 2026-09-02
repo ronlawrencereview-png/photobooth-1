@@ -466,7 +466,7 @@
   <hr class="divider">
 
   <div class="toggle-row">
-    <span>Upload as moving video (instead of a still photo)</span>
+    <span>Upload as moving GIF (instead of a still photo)</span>
     <label class="switch"><input type="checkbox" id="set-uploadgif" checked><span class="slider-tog"></span></label>
   </div>
   <div class="help-box" style="margin-bottom:18px;">
@@ -624,7 +624,7 @@
   const FILTER_LABELS = { none:"None", noir:"Noir", sepia:"Sepia", vivid:"Vivid", cool:"Cool", warm:"Warm", vintage:"Vintage Booth" };
 
   let shots = [];
-  let sessionVideoPromise = null; // resolves to {blob,ext,mimeType} for the 3-second clip, or null
+  let shotGifFrames = []; // parallel array: shotGifFrames[i] = recorded frames for shots[i]'s moving version
   let captureStream;
   let composedBlob = null;
 
@@ -751,50 +751,75 @@
     applyColorSettings();
   });
 
-  /* ---------------- session video (plain 3-second clip, mp4) ---------------- */
-  // Records a straightforward 3-second clip straight off the live camera
-  // feed — no frame-stitching, no composite grid, just a real video.
-  const SESSION_VIDEO_DURATION_MS = 3000;
+  /* ---------------- animated GIF export (moving photo strip) ---------------- */
+  const GIF_JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js";
+  const GIF_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js";
+  const GIF_FRAME_INTERVAL_MS = 300; // ~3.3fps — a quick, punchy loop rather than smooth video; much less to encode
+  const GIF_MAX_EXPORT_WIDTH = 380;  // small export canvas — the biggest single factor in render+upload speed
+  const GIF_MAX_FRAMES = 8;          // hard cap so total render time stays short and predictable
 
-  function pickVideoMimeType(){
-    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
-    const candidates = [
-      "video/mp4;codecs=avc1", "video/mp4",                 // Safari / iOS
-      "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm" // Chrome / Firefox
-    ];
-    for (const t of candidates){
-      // Some Safari versions throw on isTypeSupported for certain strings
-      // instead of returning false — never let that escape.
-      try{ if (MediaRecorder.isTypeSupported(t)) return t; }catch(e){ /* try the next candidate */ }
-    }
-    return null;
+  let gifWorkerBlobUrl = null;
+  let gifLibLoadPromise = null;
+
+  function loadScriptTag(src){
+    return new Promise((resolve,reject)=>{
+      const s = document.createElement("script");
+      s.src = src; s.onload = resolve; s.onerror = ()=>reject(new Error("script-load-failed"));
+      document.head.appendChild(s);
+    });
   }
 
-  function recordSessionVideo(mediaStream){
-    let mimeType = null;
-    try{ mimeType = pickVideoMimeType(); }catch(e){ console.warn("pickVideoMimeType failed:", e); }
-    if (!mimeType || !mediaStream) return Promise.resolve(null);
+  // Loading the worker script directly by CDN URL gets blocked by some
+  // browsers' cross-origin Worker restrictions. Fetching it and handing the
+  // library a same-origin blob URL instead sidesteps that reliably.
+  function ensureGifLib(){
+    if (!gifLibLoadPromise){
+      gifLibLoadPromise = (async ()=>{
+        if (!window.GIF) await loadScriptTag(GIF_JS_URL);
+        if (!gifWorkerBlobUrl){
+          const resp = await fetch(GIF_WORKER_URL);
+          const blob = await resp.blob();
+          gifWorkerBlobUrl = URL.createObjectURL(blob);
+        }
+      })();
+    }
+    return gifLibLoadPromise;
+  }
 
-    return new Promise((resolve)=>{
-      const chunks = [];
-      let recorder;
-      try{ recorder = new MediaRecorder(mediaStream, { mimeType, videoBitsPerSecond: 2_500_000 }); }
-      catch(e){ console.warn("MediaRecorder unavailable:", e); return resolve(null); }
+  async function exportAnimatedGif(onProgress){
+    await ensureGifLib();
+    const { paper } = getLayoutMetrics(shots.length);
+    const scale = Math.min(1, GIF_MAX_EXPORT_WIDTH / paper.w);
+    const gifW = Math.max(1, Math.round(paper.w*scale));
+    const gifH = Math.max(1, Math.round(paper.h*scale));
+    const maxFrames = Math.min(GIF_MAX_FRAMES, Math.max(1, ...shotGifFrames.map(f=> f ? f.length : 0)));
 
-      recorder.ondataavailable = e=>{ if (e.data && e.data.size) chunks.push(e.data); };
-      recorder.onerror = e=>{ console.warn("Recording error:", e.error||e); resolve(null); };
-      recorder.onstop = ()=>{
-        if (!chunks.length) return resolve(null);
-        resolve({
-          blob: new Blob(chunks, { type: mimeType.split(";")[0] }),
-          ext: mimeType.includes("mp4") ? "mp4" : "webm",
-          mimeType: mimeType.split(";")[0]
+    const tmp = document.createElement("canvas");
+    tmp.width = gifW; tmp.height = gifH;
+    const ctx = tmp.getContext("2d");
+    setHQSmoothing(ctx);
+
+    return new Promise((resolve, reject)=>{
+      const gif = new GIF({ workers:4, quality:28, width:gifW, height:gifH, workerScript:gifWorkerBlobUrl });
+      for(let f=0; f<maxFrames; f++){
+        ctx.clearRect(0,0,gifW,gifH);
+        ctx.save();
+        ctx.scale(scale, scale);
+        // Each cell uses its own recorded frame at this moment in time; a
+        // cell with fewer frames (e.g. recording started slightly late)
+        // just holds its last frame instead of breaking the loop's sync.
+        const sourceCanvases = shots.map((stillCanvas, i)=>{
+          const frames = shotGifFrames[i];
+          if (frames && frames.length) return frames[Math.min(f, frames.length-1)];
+          return stillCanvas;
         });
-      };
-      try{
-        recorder.start();
-        setTimeout(()=>{ try{ recorder.stop(); }catch(e){ resolve(null); } }, SESSION_VIDEO_DURATION_MS);
-      }catch(e){ console.warn("Couldn't start recording:", e); resolve(null); }
+        renderComposedFrame(ctx, sourceCanvases);
+        ctx.restore();
+        gif.addFrame(ctx, { copy:true, delay:GIF_FRAME_INTERVAL_MS });
+      }
+      gif.on("progress", p=>{ if (onProgress) onProgress(p); });
+      gif.on("finished", blob=> resolve(blob));
+      try{ gif.render(); }catch(e){ reject(e); }
     });
   }
 
@@ -953,7 +978,7 @@
 
   async function startSession(){
     shots = [];
-    sessionVideoPromise = null;
+    shotGifFrames = [];
     buildShotFrames(settings.count);
     show("screen-capture");
     updateCropGuide();
@@ -967,17 +992,7 @@
     await wait(400);
     for(let i=0;i<settings.count;i++){
       $("capture-caption").textContent = `Photo ${i+1} of ${settings.count}`;
-      // Only the first photo's countdown also records the 3-second video clip.
-      // This fires on its own independent timer (not inside the countdown's
-      // own await chain), so nothing about starting the recorder can ever
-      // stall or freeze the on-screen countdown itself.
-      if (i===0 && settings.uploadGif){
-        const msUntilThree = 2*(120+730); // countdown starts at 5, "3" appears after 2 ticks
-        setTimeout(()=>{
-          if (!sessionVideoPromise) sessionVideoPromise = recordSessionVideo(captureStream);
-        }, msUntilThree);
-      }
-      await runCountdown(5);
+      await runCountdown(5, 3);
       await capturePhoto();
       markShotDone(i);
       await wait(500);
@@ -1030,13 +1045,35 @@
     }
   });
 
-  // Starts the plain camera countdown. If onTick is provided, it's called
-  // with the current on-screen number each tick (used to kick off the
-  // 3-second video recording exactly when the count shows "3").
-  async function runCountdown(n){
+  let activeGifRecorder = null;
+  let activeGifFrames = null;
+
+  function grabGifFrame(video){
+    const c = document.createElement("canvas");
+    // Downscaled — these are just the raw source frames for the animated
+    // GIF, not the crisp full-res still (kept separately), so there's no
+    // need for full camera resolution here.
+    const scale = Math.min(1, 280 / video.videoWidth);
+    c.width = Math.round(video.videoWidth*scale);
+    c.height = Math.round(video.videoHeight*scale);
+    const ctx = c.getContext("2d");
+    ctx.translate(c.width,0); ctx.scale(-1,1);
+    ctx.drawImage(video,0,0,c.width,c.height);
+    return c;
+  }
+
+  // Starts recording frames for the moving photo the moment the countdown
+  // reaches "3", so guests get roughly the final 3 seconds before the
+  // shutter — the same window they're already looking at the camera for.
+  async function runCountdown(n, recordFromCount){
     const el = $("countdown-el");
+    const video = $("capture-video");
     for(let i=n;i>0;i--){
       el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)";
+      if (recordFromCount && i === recordFromCount && !activeGifRecorder){
+        activeGifFrames = [];
+        activeGifRecorder = setInterval(()=> activeGifFrames.push(grabGifFrame(video)), GIF_FRAME_INTERVAL_MS);
+      }
       await wait(730);
     }
     el.textContent = "";
@@ -1050,7 +1087,13 @@
     ctx.translate(c.width,0); ctx.scale(-1,1);
     ctx.drawImage(video,0,0,c.width,c.height);
 
+    if (activeGifRecorder){ clearInterval(activeGifRecorder); activeGifRecorder = null; }
+    const recordedFrames = activeGifFrames || [];
+    activeGifFrames = null;
+
+    const idx = (typeof replaceIndex === "number") ? replaceIndex : shots.length;
     if (typeof replaceIndex === "number") shots[replaceIndex] = c; else shots.push(c);
+    shotGifFrames[idx] = recordedFrames;
 
     $("flash-el").classList.remove("go"); void $("flash-el").offsetWidth; $("flash-el").classList.add("go");
     beep();
@@ -1080,7 +1123,7 @@
     }catch(e){ alert("Couldn't access the camera."); show("screen-retake-review"); return; }
     await wait(400);
     $("capture-caption").textContent = `Retaking photo ${index+1}`;
-    await runCountdown(5);
+    await runCountdown(5, 3);
     await capturePhoto(index);
     markShotDone(index);
     await wait(400);
@@ -1273,34 +1316,6 @@
     }catch(e){ /* storage unavailable, ignore */ }
   }
 
-  // iOS/Safari only allows a sign-in pop-up to open when it's triggered
-  // synchronously-ish from a real tap. If too much async work (like GIF
-  // rendering) happens before we ask for the token, Safari silently blocks
-  // the pop-up and this promise would otherwise hang forever with no
-  // feedback. This timeout turns that into a clear, catchable error instead.
-  function withTimeout(promise, ms, message){
-    return Promise.race([
-      promise,
-      new Promise((_,reject)=> setTimeout(()=> reject(new Error(message || "timeout")), ms))
-    ]);
-  }
-
-  function requestInteractiveToken(){
-    return ensureGIS().then(()=>withTimeout(new Promise((resolve,reject)=>{
-      const tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: settings.clientId,
-        scope: "https://www.googleapis.com/auth/drive.file",
-        callback: (resp)=>{
-          if (resp.error) return reject(resp);
-          localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
-          cacheToken(resp.access_token, resp.expires_in || 3500);
-          resolve(resp.access_token);
-        }
-      });
-      tokenClient.requestAccessToken();
-    }), 45000, "popup-timeout"));
-  }
-
   function getAccessToken(){
     const cached = getCachedToken();
     if (cached) return Promise.resolve(cached);
@@ -1308,31 +1323,47 @@
     return ensureGIS().then(()=>new Promise((resolve,reject)=>{
       try{
         const signedInBefore = localStorage.getItem(SIGNED_IN_BEFORE_KEY) === "1";
-        if (!signedInBefore){ return reject(new Error("needs-interactive")); }
         const tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: settings.clientId,
           scope: "https://www.googleapis.com/auth/drive.file",
           callback: (resp)=>{
             if (resp.error) return reject(resp);
+            localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
             cacheToken(resp.access_token, resp.expires_in || 3500);
             resolve(resp.access_token);
           }
         });
-        // Silent (no-popup) refresh — safe to run even after async delays.
-        tokenClient.requestAccessToken({ prompt: "none" });
+        // Try a silent (no-popup) refresh first if we've signed in before on this device.
+        if (signedInBefore){
+          tokenClient.requestAccessToken({ prompt: "none" });
+        } else {
+          tokenClient.requestAccessToken();
+        }
       }catch(e){ reject(e); }
     })).catch((err)=>{
-      // Silent refresh can fail (session too old, cookies cleared, first-ever
-      // sign-in). Fall back to one visible pop-up — but this MUST be called
-      // as early as possible in a click handler, before any slow work, or
-      // Safari will block it. See requestInteractiveToken().
-      return requestInteractiveToken();
+      // Silent refresh can fail (session too old, cookies cleared, etc).
+      // Fall back to one visible sign-in, which then gets cached again.
+      if (err && err.type === "popup_failed_to_open") return Promise.reject(err);
+      return ensureGIS().then(()=>new Promise((resolve,reject)=>{
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: settings.clientId,
+          scope: "https://www.googleapis.com/auth/drive.file",
+          callback: (resp)=>{
+            if (resp.error) return reject(resp);
+            localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
+            cacheToken(resp.access_token, resp.expires_in || 3500);
+            resolve(resp.access_token);
+          }
+        });
+        tokenClient.requestAccessToken();
+      }));
     });
   }
 
-  async function uploadToDrive(token, blob, mimeType, ext){
+  async function uploadToDrive(blob, mimeType, ext){
     mimeType = mimeType || "image/jpeg";
     ext = ext || "jpg";
+    const token = await getAccessToken();
     const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+"."+ext, mimeType:mimeType };
     if (settings.folderId) metadata.parents = [settings.folderId];
     const form = new FormData();
@@ -1368,47 +1399,35 @@
     if (!composedBlob){ statusEl.textContent = "No photo ready yet."; return; }
     $("upload-btn").disabled = true;
 
-    // Get the Drive token FIRST, before any slow work. Safari only allows
-    // the Google sign-in pop-up to open when it's triggered right after a
-    // real tap — if GIF rendering (which can take several seconds) runs
-    // first, the pop-up gets silently blocked and nothing ever uploads.
-    let token;
-    try{
-      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Connecting to Google Drive...</span>';
-      token = await getAccessToken();
-    }catch(e){
-      console.warn(e);
-      statusEl.innerHTML = "";
-      if (e && e.message === "popup-timeout"){
-        statusEl.textContent = "The Google sign-in window didn't open. Please allow pop-ups for this site in Safari, then try again.";
-      } else if (e && (e.message === "gis-load-failed" || e.message === "gis-timeout")){
-        statusEl.textContent = "Google Sign-In can't load — this needs the page hosted on your own https:// address.";
-      } else {
-        statusEl.textContent = "Couldn't connect to Google Drive. Check the Client ID and try again.";
+    let gifBlob = null;
+    if (settings.uploadGif){
+      try{
+        statusEl.innerHTML = '<span class="upload-spinner"></span><span>Rendering moving photo...</span>';
+        gifBlob = await exportAnimatedGif(p=>{
+          statusEl.innerHTML = `<span class="upload-spinner"></span><span>Rendering moving photo... ${Math.round(p*100)}%</span>`;
+        });
+      }catch(e){
+        console.warn("GIF export failed, falling back to still photo:", e);
+        gifBlob = null;
       }
-      $("upload-btn").disabled = false;
-      return;
-    }
-
-    let videoResult = null;
-    if (settings.uploadGif && sessionVideoPromise){
-      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Finishing up your video...</span>';
-      try{ videoResult = await sessionVideoPromise; }
-      catch(e){ console.warn("Session video unavailable, falling back to still photo:", e); videoResult = null; }
     }
 
     try{
       statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
-      const link = videoResult
-        ? await uploadToDrive(token, videoResult.blob, videoResult.mimeType, videoResult.ext)
-        : await uploadToDrive(token, composedBlob, "image/jpeg", "jpg");
+      const link = gifBlob
+        ? await uploadToDrive(gifBlob, "image/gif", "gif")
+        : await uploadToDrive(composedBlob, "image/jpeg", "jpg");
       statusEl.innerHTML = "";
       renderQR(link);
       show("screen-qr");
     }catch(e){
       console.warn(e);
       statusEl.innerHTML = "";
-      statusEl.textContent = "Upload failed partway through. Please try again.";
+      if (e && (e.message === "gis-load-failed" || e.message === "gis-timeout")){
+        statusEl.textContent = "Google Sign-In can't load in this preview — host this file on your own https:// address to enable uploads.";
+      } else {
+        statusEl.textContent = "Couldn't upload right now. Check the Client ID and try again.";
+      }
     }
     $("upload-btn").disabled = false;
   };
