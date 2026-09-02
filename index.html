@@ -1316,6 +1316,34 @@
     }catch(e){ /* storage unavailable, ignore */ }
   }
 
+  // iOS/Safari only allows a sign-in pop-up to open when it's triggered
+  // synchronously-ish from a real tap. If too much async work (like GIF
+  // rendering) happens before we ask for the token, Safari silently blocks
+  // the pop-up and this promise would otherwise hang forever with no
+  // feedback. This timeout turns that into a clear, catchable error instead.
+  function withTimeout(promise, ms, message){
+    return Promise.race([
+      promise,
+      new Promise((_,reject)=> setTimeout(()=> reject(new Error(message || "timeout")), ms))
+    ]);
+  }
+
+  function requestInteractiveToken(){
+    return ensureGIS().then(()=>withTimeout(new Promise((resolve,reject)=>{
+      const tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: settings.clientId,
+        scope: "https://www.googleapis.com/auth/drive.file",
+        callback: (resp)=>{
+          if (resp.error) return reject(resp);
+          localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
+          cacheToken(resp.access_token, resp.expires_in || 3500);
+          resolve(resp.access_token);
+        }
+      });
+      tokenClient.requestAccessToken();
+    }), 45000, "popup-timeout"));
+  }
+
   function getAccessToken(){
     const cached = getCachedToken();
     if (cached) return Promise.resolve(cached);
@@ -1323,47 +1351,31 @@
     return ensureGIS().then(()=>new Promise((resolve,reject)=>{
       try{
         const signedInBefore = localStorage.getItem(SIGNED_IN_BEFORE_KEY) === "1";
+        if (!signedInBefore){ return reject(new Error("needs-interactive")); }
         const tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: settings.clientId,
           scope: "https://www.googleapis.com/auth/drive.file",
           callback: (resp)=>{
             if (resp.error) return reject(resp);
-            localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
             cacheToken(resp.access_token, resp.expires_in || 3500);
             resolve(resp.access_token);
           }
         });
-        // Try a silent (no-popup) refresh first if we've signed in before on this device.
-        if (signedInBefore){
-          tokenClient.requestAccessToken({ prompt: "none" });
-        } else {
-          tokenClient.requestAccessToken();
-        }
+        // Silent (no-popup) refresh — safe to run even after async delays.
+        tokenClient.requestAccessToken({ prompt: "none" });
       }catch(e){ reject(e); }
     })).catch((err)=>{
-      // Silent refresh can fail (session too old, cookies cleared, etc).
-      // Fall back to one visible sign-in, which then gets cached again.
-      if (err && err.type === "popup_failed_to_open") return Promise.reject(err);
-      return ensureGIS().then(()=>new Promise((resolve,reject)=>{
-        const tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: settings.clientId,
-          scope: "https://www.googleapis.com/auth/drive.file",
-          callback: (resp)=>{
-            if (resp.error) return reject(resp);
-            localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
-            cacheToken(resp.access_token, resp.expires_in || 3500);
-            resolve(resp.access_token);
-          }
-        });
-        tokenClient.requestAccessToken();
-      }));
+      // Silent refresh can fail (session too old, cookies cleared, first-ever
+      // sign-in). Fall back to one visible pop-up — but this MUST be called
+      // as early as possible in a click handler, before any slow work, or
+      // Safari will block it. See requestInteractiveToken().
+      return requestInteractiveToken();
     });
   }
 
-  async function uploadToDrive(blob, mimeType, ext){
+  async function uploadToDrive(token, blob, mimeType, ext){
     mimeType = mimeType || "image/jpeg";
     ext = ext || "jpg";
-    const token = await getAccessToken();
     const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+"."+ext, mimeType:mimeType };
     if (settings.folderId) metadata.parents = [settings.folderId];
     const form = new FormData();
@@ -1399,6 +1411,28 @@
     if (!composedBlob){ statusEl.textContent = "No photo ready yet."; return; }
     $("upload-btn").disabled = true;
 
+    // Get the Drive token FIRST, before any slow work. Safari only allows
+    // the Google sign-in pop-up to open when it's triggered right after a
+    // real tap — if GIF rendering (which can take several seconds) runs
+    // first, the pop-up gets silently blocked and nothing ever uploads.
+    let token;
+    try{
+      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Connecting to Google Drive...</span>';
+      token = await getAccessToken();
+    }catch(e){
+      console.warn(e);
+      statusEl.innerHTML = "";
+      if (e && e.message === "popup-timeout"){
+        statusEl.textContent = "The Google sign-in window didn't open. Please allow pop-ups for this site in Safari, then try again.";
+      } else if (e && (e.message === "gis-load-failed" || e.message === "gis-timeout")){
+        statusEl.textContent = "Google Sign-In can't load — this needs the page hosted on your own https:// address.";
+      } else {
+        statusEl.textContent = "Couldn't connect to Google Drive. Check the Client ID and try again.";
+      }
+      $("upload-btn").disabled = false;
+      return;
+    }
+
     let gifBlob = null;
     if (settings.uploadGif){
       try{
@@ -1415,19 +1449,15 @@
     try{
       statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
       const link = gifBlob
-        ? await uploadToDrive(gifBlob, "image/gif", "gif")
-        : await uploadToDrive(composedBlob, "image/jpeg", "jpg");
+        ? await uploadToDrive(token, gifBlob, "image/gif", "gif")
+        : await uploadToDrive(token, composedBlob, "image/jpeg", "jpg");
       statusEl.innerHTML = "";
       renderQR(link);
       show("screen-qr");
     }catch(e){
       console.warn(e);
       statusEl.innerHTML = "";
-      if (e && (e.message === "gis-load-failed" || e.message === "gis-timeout")){
-        statusEl.textContent = "Google Sign-In can't load in this preview — host this file on your own https:// address to enable uploads.";
-      } else {
-        statusEl.textContent = "Couldn't upload right now. Check the Client ID and try again.";
-      }
+      statusEl.textContent = "Upload failed partway through. Please try again.";
     }
     $("upload-btn").disabled = false;
   };
