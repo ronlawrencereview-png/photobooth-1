@@ -234,7 +234,13 @@
   .btn.primary:hover{ background:var(--accent-soft); }
   .btn:disabled{ opacity:.4; cursor:not-allowed; }
   .btn small{ font-weight:400; opacity:.75; display:block; font-size:11.5px; margin-top:2px; }
-  .status-line{ font-size:12.5px; color:var(--text-dim); min-height:16px; }
+  .status-line{ font-size:12.5px; color:var(--text-dim); min-height:16px; display:flex; align-items:center; justify-content:center; gap:8px; }
+  .upload-spinner{
+    width:16px; height:16px; border-radius:50%; flex-shrink:0;
+    border:2px solid var(--line); border-top-color:var(--accent);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
 
   /* ---------- QR ---------- */
   #screen-qr{ background:var(--bg); }
@@ -411,12 +417,26 @@
   <hr class="divider">
 
   <div class="field">
-    <label>Event background (used behind every photo &amp; frame)</label>
+    <label>App screen background (shown on the idle/start screen)</label>
+    <input type="file" id="set-appbgimage" accept="image/*">
+  </div>
+  <div id="appbg-preview-wrap" style="display:none; margin:-6px 0 14px;">
+    <img id="appbg-preview" style="width:100%; max-height:110px; object-fit:cover; border-radius:4px; border:1px solid var(--line);">
+    <div class="text-link" id="appbg-clear-link" style="margin-top:8px; font-size:12px;">Remove app background image</div>
+  </div>
+  <div class="help-box" style="margin-bottom:18px;">
+    This photo appears only on the "Say Cheese" start screen guests see before they begin — it's just the app's look, not part of the printed photo.
+  </div>
+
+  <hr class="divider">
+
+  <div class="field">
+    <label>Photo frame background (used behind every printed photo)</label>
     <input type="file" id="set-bgimage" accept="image/*">
   </div>
   <div id="bg-preview-wrap" style="display:none; margin:-6px 0 14px;">
     <img id="bg-preview" style="width:100%; max-height:110px; object-fit:cover; border-radius:4px; border:1px solid var(--line);">
-    <div class="text-link" id="bg-clear-link" style="margin-top:8px; font-size:12px;">Remove background image</div>
+    <div class="text-link" id="bg-clear-link" style="margin-top:8px; font-size:12px;">Remove frame background image</div>
   </div>
   <div class="help-box" style="margin-bottom:18px;">
     Upload a branded backdrop (e.g. a wedding pattern or company logo tile) once per event. It stays behind every frame style and filter so all prints from this booth session look consistent.
@@ -476,7 +496,8 @@
     tagline:"Strike a pose — your photos will be ready to scan and keep in seconds.",
     count:4, paper:"2x6", filter:"warm", frame:"flat",
     autoUpload:false, clientId:"", folderId:"",
-    backgroundImage:null, backgroundImageURL:null
+    backgroundImage:null, backgroundImageURL:null,
+    appBackgroundImage:null, appBackgroundImageURL:null
   };
   const FRAME_DEFAULT_BG = { flat:"#f7f2e7", gallery:"#f4ecdd", confetti:"#efe4cf", botanical:"#f1ede1", minimal:"#f6f3ea", polaroid:"#e8ddc8" };
   const PRINT_DPI = 600; // raised from 300 — sharper prints/downloads, less visible blur or grain
@@ -592,6 +613,31 @@
     $("event-sub-display").textContent = settings.tagline;
   }
 
+  $("set-appbgimage").addEventListener("change", (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        settings.appBackgroundImage = img;
+        settings.appBackgroundImageURL = reader.result;
+        $("appbg-preview").src = reader.result;
+        $("appbg-preview-wrap").style.display = "block";
+        applyIdleBackground();
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  $("appbg-clear-link").addEventListener("click", ()=>{
+    settings.appBackgroundImage = null;
+    settings.appBackgroundImageURL = null;
+    $("set-appbgimage").value = "";
+    $("appbg-preview-wrap").style.display = "none";
+    applyIdleBackground();
+  });
+
   $("set-bgimage").addEventListener("change", (e)=>{
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -603,7 +649,6 @@
         settings.backgroundImageURL = reader.result;
         $("bg-preview").src = reader.result;
         $("bg-preview-wrap").style.display = "block";
-        applyIdleBackground();
       };
       img.src = reader.result;
     };
@@ -614,7 +659,6 @@
     settings.backgroundImageURL = null;
     $("set-bgimage").value = "";
     $("bg-preview-wrap").style.display = "none";
-    applyIdleBackground();
   });
 
   /* ---------------- live color customization ---------------- */
@@ -673,8 +717,8 @@
   // a plain dark tone). The camera is only ever opened once a session starts.
   function applyIdleBackground(){
     const el = $("idle-bg");
-    if (settings.backgroundImageURL){
-      el.style.backgroundImage = `url("${settings.backgroundImageURL}")`;
+    if (settings.appBackgroundImageURL){
+      el.style.backgroundImage = `url("${settings.appBackgroundImageURL}")`;
     } else {
       el.style.backgroundImage = "none";
     }
@@ -826,7 +870,7 @@
     show("screen-capture");
     updateCropGuide();
     try{
-      captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:3840}, height:{ideal:2160} }, audio:false });
+      captureStream = await acquireCameraStream();
       $("capture-video").srcObject = captureStream;
     }catch(e){
       alert("Couldn't access the camera. Please allow camera access and try again.");
@@ -848,6 +892,45 @@
   function stopCaptureStream(){
     if (captureStream){ captureStream.getTracks().forEach(t=>t.stop()); captureStream=null; }
   }
+
+  function requestCameraStream(){
+    return navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:3840}, height:{ideal:2160} }, audio:false });
+  }
+
+  // iOS sometimes fails the very first getUserMedia call right after the
+  // app resumes from the background (camera hardware briefly still
+  // releasing). One short retry silently fixes most of these cases.
+  async function acquireCameraStream(retries){
+    if (typeof retries !== "number") retries = 1;
+    try{
+      return await requestCameraStream();
+    }catch(e){
+      if (retries > 0){ await wait(500); return acquireCameraStream(retries - 1); }
+      throw e;
+    }
+  }
+
+  // Backgrounding the app (Home button, app switcher, locking the phone)
+  // kills the live camera track on iOS. Release it explicitly when hidden
+  // so the hardware resets cleanly, then silently reacquire it when the
+  // guest comes back — instead of leaving them stuck on a frozen/black
+  // camera screen with no way forward.
+  document.addEventListener("visibilitychange", ()=>{
+    const onCaptureScreen = $("screen-capture").classList.contains("active");
+    if (document.hidden){
+      if (onCaptureScreen) stopCaptureStream();
+    } else {
+      if (onCaptureScreen && !captureStream){
+        acquireCameraStream(2).then(stream=>{
+          captureStream = stream;
+          $("capture-video").srcObject = stream;
+        }).catch(()=>{
+          alert("Camera access was interrupted. Please tap the shutter to start again.");
+          show("screen-idle");
+        });
+      }
+    }
+  });
 
   async function runCountdown(n){
     const el = $("countdown-el");
@@ -886,7 +969,7 @@
     updateCropGuide();
     for(let i=0;i<shots.length;i++){ if(i!==index) markShotDone(i); }
     try{
-      captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:3840}, height:{ideal:2160} }, audio:false });
+      captureStream = await acquireCameraStream();
       $("capture-video").srcObject = captureStream;
     }catch(e){ alert("Couldn't access the camera."); show("screen-retake-review"); return; }
     await wait(400);
@@ -1153,19 +1236,21 @@
   $("upload-btn").onclick = async ()=>{
     const statusEl = $("upload-status");
     if (!settings.clientId){
+      statusEl.innerHTML = "";
       statusEl.textContent = "Add a Google OAuth Client ID in Settings first.";
       return;
     }
     if (!composedBlob){ statusEl.textContent = "No photo ready yet."; return; }
-    statusEl.textContent = "Uploading to Google Drive...";
+    statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
     $("upload-btn").disabled = true;
     try{
       const link = await uploadToDrive(composedBlob);
-      statusEl.textContent = "";
+      statusEl.innerHTML = "";
       renderQR(link);
       show("screen-qr");
     }catch(e){
       console.warn(e);
+      statusEl.innerHTML = "";
       if (e && (e.message === "gis-load-failed" || e.message === "gis-timeout")){
         statusEl.textContent = "Google Sign-In can't load in this preview — host this file on your own https:// address to enable uploads.";
       } else {
