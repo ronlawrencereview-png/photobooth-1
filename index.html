@@ -624,7 +624,7 @@
   const FILTER_LABELS = { none:"None", noir:"Noir", sepia:"Sepia", vivid:"Vivid", cool:"Cool", warm:"Warm", vintage:"Vintage Booth" };
 
   let shots = [];
-  let shotGifFrames = []; // parallel array: shotGifFrames[i] = recorded frames for shots[i]'s moving version
+  let sessionVideoPromise = null; // resolves to {blob,ext,mimeType} for the 3-second clip, or null
   let captureStream;
   let composedBlob = null;
 
@@ -751,14 +751,10 @@
     applyColorSettings();
   });
 
-  /* ---------------- animated video export (moving photo strip) ---------------- */
-  // Recorded via MediaRecorder straight off a canvas — this is what actually
-  // plays smoothly on a phone/Drive preview. The old approach re-encoded a
-  // GIF frame-by-frame in JS, which is CPU-heavy and always looks choppy on
-  // playback; a real H.264/VP9 video is both faster to produce and smooth.
-  const VIDEO_FPS = 12;
-  const VIDEO_LOOPS = 2;              // play the little sequence twice so it isn't a blink-and-miss-it clip
-  const VIDEO_MAX_EXPORT_WIDTH = 480; // video compresses far better than GIF, so this can be a bit larger
+  /* ---------------- session video (plain 3-second clip, mp4) ---------------- */
+  // Records a straightforward 3-second clip straight off the live camera
+  // feed — no frame-stitching, no composite grid, just a real video.
+  const SESSION_VIDEO_DURATION_MS = 3000;
 
   function pickVideoMimeType(){
     if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
@@ -769,69 +765,30 @@
     return candidates.find(t=> MediaRecorder.isTypeSupported(t)) || null;
   }
 
-  async function exportAnimatedVideo(onProgress){
-    const { paper } = getLayoutMetrics(shots.length);
-    const maxFrames = Math.max(1, ...shotGifFrames.map(f=> f ? f.length : 0));
-    if (maxFrames <= 1) return null; // nothing was recorded to animate — caller falls back to a still photo
-
+  function recordSessionVideo(mediaStream){
     const mimeType = pickVideoMimeType();
-    if (!mimeType) return null; // browser can't record video — caller falls back to a still photo
+    if (!mimeType || !mediaStream) return Promise.resolve(null);
 
-    const scale = Math.min(1, VIDEO_MAX_EXPORT_WIDTH / paper.w);
-    const vw = Math.max(2, Math.round(paper.w*scale));
-    const vh = Math.max(2, Math.round(paper.h*scale));
-
-    const tmp = document.createElement("canvas");
-    tmp.width = vw; tmp.height = vh;
-    const ctx = tmp.getContext("2d");
-    setHQSmoothing(ctx);
-    // Draw one frame immediately so the recorded stream never starts on a blank canvas.
-    ctx.save(); ctx.scale(scale, scale); renderComposedFrame(ctx, shots); ctx.restore();
-
-    const stream = tmp.captureStream ? tmp.captureStream(VIDEO_FPS) : null;
-    if (!stream) return null;
-
-    return new Promise((resolve, reject)=>{
+    return new Promise((resolve)=>{
       const chunks = [];
       let recorder;
-      try{ recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_500_000 }); }
-      catch(e){ return reject(e); }
+      try{ recorder = new MediaRecorder(mediaStream, { mimeType, videoBitsPerSecond: 2_500_000 }); }
+      catch(e){ console.warn("MediaRecorder unavailable:", e); return resolve(null); }
 
       recorder.ondataavailable = e=>{ if (e.data && e.data.size) chunks.push(e.data); };
-      recorder.onerror = e=> reject(e.error || e);
+      recorder.onerror = e=>{ console.warn("Recording error:", e.error||e); resolve(null); };
       recorder.onstop = ()=>{
-        if (!chunks.length) return reject(new Error("no-video-data"));
-        resolve({ blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext: mimeType.includes("mp4") ? "mp4" : "webm", mimeType: mimeType.split(";")[0] });
-      };
-
-      recorder.start();
-
-      const frameDelay = 1000/VIDEO_FPS;
-      const totalTicks = maxFrames*VIDEO_LOOPS;
-      let tickIndex = 0;
-
-      const tick = ()=>{
-        const f = tickIndex % maxFrames;
-        ctx.clearRect(0,0,vw,vh);
-        ctx.save(); ctx.scale(scale, scale);
-        const sourceCanvases = shots.map((stillCanvas, i)=>{
-          const frames = shotGifFrames[i];
-          if (frames && frames.length) return frames[Math.min(f, frames.length-1)];
-          return stillCanvas;
+        if (!chunks.length) return resolve(null);
+        resolve({
+          blob: new Blob(chunks, { type: mimeType.split(";")[0] }),
+          ext: mimeType.includes("mp4") ? "mp4" : "webm",
+          mimeType: mimeType.split(";")[0]
         });
-        renderComposedFrame(ctx, sourceCanvases);
-        ctx.restore();
-
-        tickIndex++;
-        if (onProgress) onProgress(tickIndex/totalTicks);
-        if (tickIndex < totalTicks){
-          setTimeout(tick, frameDelay);
-        } else {
-          // small tail delay so the encoder actually captures that last frame before we stop
-          setTimeout(()=>{ try{ recorder.stop(); }catch(e){ reject(e); } }, frameDelay+120);
-        }
       };
-      tick();
+      try{
+        recorder.start();
+        setTimeout(()=>{ try{ recorder.stop(); }catch(e){ resolve(null); } }, SESSION_VIDEO_DURATION_MS);
+      }catch(e){ console.warn("Couldn't start recording:", e); resolve(null); }
     });
   }
 
@@ -990,7 +947,7 @@
 
   async function startSession(){
     shots = [];
-    shotGifFrames = [];
+    sessionVideoPromise = null;
     buildShotFrames(settings.count);
     show("screen-capture");
     updateCropGuide();
@@ -1004,7 +961,13 @@
     await wait(400);
     for(let i=0;i<settings.count;i++){
       $("capture-caption").textContent = `Photo ${i+1} of ${settings.count}`;
-      await runCountdown(5, 3);
+      // Only the first photo's countdown also records the 3-second video clip.
+      const onTick = (i===0 && settings.uploadGif) ? (count)=>{
+        if (count === 3 && !sessionVideoPromise){
+          sessionVideoPromise = recordSessionVideo(captureStream);
+        }
+      } : null;
+      await runCountdown(5, onTick);
       await capturePhoto();
       markShotDone(i);
       await wait(500);
@@ -1057,35 +1020,14 @@
     }
   });
 
-  let activeGifRecorder = null;
-  let activeGifFrames = null;
-
-  function grabGifFrame(video){
-    const c = document.createElement("canvas");
-    // Downscaled — these are just the raw source frames for the animated
-    // GIF, not the crisp full-res still (kept separately), so there's no
-    // need for full camera resolution here.
-    const scale = Math.min(1, 280 / video.videoWidth);
-    c.width = Math.round(video.videoWidth*scale);
-    c.height = Math.round(video.videoHeight*scale);
-    const ctx = c.getContext("2d");
-    ctx.translate(c.width,0); ctx.scale(-1,1);
-    ctx.drawImage(video,0,0,c.width,c.height);
-    return c;
-  }
-
-  // Starts recording frames for the moving photo the moment the countdown
-  // reaches "3", so guests get roughly the final 3 seconds before the
-  // shutter — the same window they're already looking at the camera for.
-  async function runCountdown(n, recordFromCount){
+  // Starts the plain camera countdown. If onTick is provided, it's called
+  // with the current on-screen number each tick (used to kick off the
+  // 3-second video recording exactly when the count shows "3").
+  async function runCountdown(n, onTick){
     const el = $("countdown-el");
-    const video = $("capture-video");
     for(let i=n;i>0;i--){
       el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)";
-      if (recordFromCount && i === recordFromCount && !activeGifRecorder){
-        activeGifFrames = [];
-        activeGifRecorder = setInterval(()=> activeGifFrames.push(grabGifFrame(video)), GIF_FRAME_INTERVAL_MS);
-      }
+      if (onTick) onTick(i);
       await wait(730);
     }
     el.textContent = "";
@@ -1099,13 +1041,7 @@
     ctx.translate(c.width,0); ctx.scale(-1,1);
     ctx.drawImage(video,0,0,c.width,c.height);
 
-    if (activeGifRecorder){ clearInterval(activeGifRecorder); activeGifRecorder = null; }
-    const recordedFrames = activeGifFrames || [];
-    activeGifFrames = null;
-
-    const idx = (typeof replaceIndex === "number") ? replaceIndex : shots.length;
     if (typeof replaceIndex === "number") shots[replaceIndex] = c; else shots.push(c);
-    shotGifFrames[idx] = recordedFrames;
 
     $("flash-el").classList.remove("go"); void $("flash-el").offsetWidth; $("flash-el").classList.add("go");
     beep();
@@ -1135,7 +1071,7 @@
     }catch(e){ alert("Couldn't access the camera."); show("screen-retake-review"); return; }
     await wait(400);
     $("capture-caption").textContent = `Retaking photo ${index+1}`;
-    await runCountdown(5, 3);
+    await runCountdown(5);
     await capturePhoto(index);
     markShotDone(index);
     await wait(400);
@@ -1446,16 +1382,10 @@
     }
 
     let videoResult = null;
-    if (settings.uploadGif){
-      try{
-        statusEl.innerHTML = '<span class="upload-spinner"></span><span>Rendering moving photo...</span>';
-        videoResult = await exportAnimatedVideo(p=>{
-          statusEl.innerHTML = `<span class="upload-spinner"></span><span>Rendering moving photo... ${Math.round(p*100)}%</span>`;
-        });
-      }catch(e){
-        console.warn("Video export failed, falling back to still photo:", e);
-        videoResult = null;
-      }
+    if (settings.uploadGif && sessionVideoPromise){
+      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Finishing up your video...</span>';
+      try{ videoResult = await sessionVideoPromise; }
+      catch(e){ console.warn("Session video unavailable, falling back to still photo:", e); videoResult = null; }
     }
 
     try{
