@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shutter & Strip">
+<title>Shutter &amp; Strip — Photo Booth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#17140f;
+    --bg-2:#1f1a13;
+    --panel:#221d15;
+    --paper:#f4ecdd;
+    --ink:#2a2318;
+    --text:#f4ecdd;
+    --text-dim:#b3a894;
+    --accent:#c98a3e;
+    --accent-soft:#e0ab68;
+    --sage:#7c8b6c;
+    --brick:#8e4b46;
+    --line: rgba(244,236,221,0.14);
+    --shadow: 0 18px 40px rgba(0,0,0,0.45);
+    --radius: 4px;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:var(--bg); color:var(--text);
+    overflow:hidden; touch-action:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  #app{ position:fixed; inset:0; overflow:hidden; }
+
+  .screen{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transform:translateY(12px);
+    transition:opacity .45s ease, transform .45s ease;
+    overflow-y:auto;
+  }
+  .screen.active{ opacity:1; pointer-events:auto; transform:translateY(0); }
+
+  .sprockets{
+    position:absolute; top:0; bottom:0; width:34px;
+    display:flex; flex-direction:column; justify-content:space-evenly; align-items:center;
+    z-index:2; pointer-events:none; opacity:.55;
+  }
+  .sprockets.left{ left:0; } .sprockets.right{ right:0; }
+  .sprockets span{ width:12px; height:12px; border-radius:2px; background:var(--bg); border:1px solid var(--line); }
+
+  /* ---------- IDLE ---------- */
+  #screen-idle{ background:var(--bg-2); }
+  #idle-bg{
+    position:absolute; inset:0; width:100%; height:100%;
+    background-size:cover; background-position:center; background-repeat:no-repeat;
+    background-color:var(--bg-2);
+  }
+  #idle-veil{
+    position:absolute; inset:0;
+    background:linear-gradient(180deg, rgba(23,20,15,.55) 0%, rgba(23,20,15,.72) 55%, rgba(23,20,15,.88) 100%);
+  }
+  .idle-content{ position:relative; z-index:3; text-align:center; padding:0 40px; }
+  .brand-eyebrow{ font-size:13px; letter-spacing:.14em; color:var(--accent-soft); margin-bottom:10px; font-weight:500; }
+  .brand-title{
+    font-family:Fraunces, Georgia, serif; font-style:italic; font-weight:600;
+    font-size:clamp(48px, 9vw, 92px); line-height:1.02; margin:0;
+  }
+  .brand-sub{ margin-top:16px; color:var(--text-dim); font-size:16px; max-width:420px; margin-left:auto; margin-right:auto; }
+  .shutter-btn{
+    margin-top:44px; width:132px; height:132px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, var(--accent-soft), var(--accent) 70%);
+    border:6px solid rgba(244,236,221,.85); box-shadow:0 0 0 2px rgba(0,0,0,.3), var(--shadow);
+    color:#1c1408; font-family:Inter; font-weight:700; font-size:15px; letter-spacing:.06em;
+    cursor:pointer; animation:pulse 2.6s ease-in-out infinite;
+  }
+  .shutter-btn.small{ width:auto; height:auto; border-radius:30px; padding:16px 40px; animation:none; margin-top:30px; }
+  @keyframes pulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.045);} }
+  .idle-hint{ margin-top:22px; font-size:13px; color:var(--text-dim); }
+
+  .gear{
+    position:absolute; top:18px; right:18px; z-index:5; width:40px; height:40px;
+    border-radius:50%; background:rgba(0,0,0,.25); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:.5;
+    transition:opacity .2s;
+  }
+  .gear:hover{ opacity:1; }
+  .gear svg{ width:18px; height:18px; stroke:var(--text); }
+
+  /* ---------- SETTINGS DRAWER ---------- */
+  #drawer-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:20;
+    opacity:0; pointer-events:none; transition:opacity .3s;
+  }
+  #drawer-backdrop.open{ opacity:1; pointer-events:auto; }
+  #drawer{
+    position:fixed; top:0; right:0; bottom:0; width:min(400px,92vw); z-index:21;
+    background:var(--panel); border-left:1px solid var(--line);
+    transform:translateX(100%); transition:transform .35s ease;
+    display:flex; flex-direction:column; padding:26px 24px; overflow-y:auto;
+  }
+  #drawer.open{ transform:translateX(0); }
+  #drawer h2{ font-family:Fraunces, serif; font-weight:600; font-size:24px; margin:0 0 4px; }
+  #drawer .drawer-note{ color:var(--text-dim); font-size:12.5px; margin-bottom:22px; }
+  .field{ margin-bottom:18px; }
+  .field label{ display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:6px; letter-spacing:.02em; }
+  .field select, .field input[type=text]{
+    width:100%; padding:10px 12px; background:var(--bg-2); border:1px solid var(--line);
+    border-radius:var(--radius); color:var(--text); font-size:14px; font-family:Inter;
+  }
+  .field-row{ display:flex; gap:12px; }
+  .field-row .field{ flex:1; }
+  .toggle-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-top:1px solid var(--line); }
+  .toggle-row span{ font-size:14px; }
+  .switch{ position:relative; width:42px; height:24px; }
+  .switch input{ opacity:0; width:0; height:0; }
+  .slider-tog{ position:absolute; inset:0; background:var(--bg-2); border:1px solid var(--line); border-radius:24px; cursor:pointer; transition:.2s; }
+  .slider-tog:before{ content:""; position:absolute; width:16px; height:16px; left:3px; top:3px; background:var(--text-dim); border-radius:50%; transition:.2s; }
+  input:checked + .slider-tog{ background:var(--accent); }
+  input:checked + .slider-tog:before{ transform:translateX(18px); background:#1c1408; }
+  .divider{ border:none; border-top:1px solid var(--line); margin:20px 0; }
+  .help-box{ font-size:12px; color:var(--text-dim); line-height:1.55; background:var(--bg-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
+  .drawer-close{ margin-top:auto; padding-top:18px; text-align:center; font-size:13px; color:var(--text-dim); cursor:pointer; }
+
+  /* ---------- CUSTOMIZE (guest-facing pickers) ---------- */
+  #screen-customize{ background:var(--bg-2); }
+  #screen-filter{ background:var(--bg-2); }
+  .customize-wrap{ max-width:680px; width:100%; padding:36px 30px 60px; text-align:center; }
+  .customize-wrap h2{ font-family:Fraunces, serif; font-style:italic; font-weight:600; font-size:34px; margin:0 0 6px; }
+  .customize-wrap .customize-sub{ color:var(--text-dim); font-size:14px; margin-bottom:30px; }
+  .picker-group{ margin-bottom:30px; text-align:left; }
+  .picker-group > label{ display:block; font-size:13px; letter-spacing:.03em; color:var(--text-dim); margin-bottom:12px; }
+  .pill-row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .pill{
+    padding:13px 22px; border-radius:30px; border:1.5px solid var(--line); background:var(--panel);
+    color:var(--text); font-family:Inter; font-weight:600; font-size:15px; cursor:pointer; transition:.15s;
+  }
+  .pill:hover{ border-color:var(--accent-soft); }
+  .pill.active{ background:var(--accent); border-color:var(--accent); color:#1c1408; }
+  .filter-row{ display:flex; gap:12px; flex-wrap:wrap; }
+  .filter-swatch{
+    background:none; border:2px solid transparent; border-radius:8px; padding:5px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+  }
+  .filter-swatch canvas{ border-radius:50%; display:block; }
+  .filter-swatch span{ font-size:11.5px; color:var(--text-dim); }
+  .filter-swatch.active{ border-color:var(--accent); }
+  .filter-swatch.active span{ color:var(--accent-soft); }
+
+  /* ---------- CAPTURE ---------- */
+  #screen-capture{ background:#000; }
+  #capture-video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  .capture-veil{ position:absolute; inset:0; background:radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 40%, rgba(0,0,0,.55) 100%); z-index:2; }
+  #crop-guide{
+    position:absolute; z-index:3; border:2px solid rgba(244,236,221,.9);
+    box-shadow:0 0 0 9999px rgba(0,0,0,.5);
+    pointer-events:none;
+  }
+  #crop-guide:before, #crop-guide:after{ content:""; position:absolute; background:rgba(244,236,221,.55); }
+  #crop-guide:before{ top:50%; left:-1px; right:-1px; height:1px; transform:translateY(-50%); opacity:.35; }
+  #crop-guide:after{ left:50%; top:-1px; bottom:-1px; width:1px; transform:translateX(-50%); opacity:.35; }
+  .crop-guide-label{
+    position:absolute; top:-30px; left:50%; transform:translateX(-50%);
+    font-size:12px; letter-spacing:.03em; color:var(--text-dim); white-space:nowrap;
+  }
+  .shot-frames{ position:absolute; top:26px; left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:4; }
+  .shot-frames .f{ width:26px; height:19px; border:2px solid rgba(244,236,221,.55); border-radius:2px; }
+  .shot-frames .f.done{ background:var(--accent); border-color:var(--accent); }
+  .countdown{
+    position:relative; z-index:4; font-family:Fraunces, serif; font-weight:600;
+    font-size:min(30vw,220px); color:var(--paper); text-shadow:0 6px 30px rgba(0,0,0,.6);
+  }
+  .flash{ position:fixed; inset:0; background:#fff; opacity:0; z-index:50; pointer-events:none; }
+  .flash.go{ animation:flashpop .35s ease-out; }
+  @keyframes flashpop{ 0%{opacity:.95;} 100%{opacity:0;} }
+  .capture-caption{ position:absolute; bottom:34px; z-index:4; color:var(--text-dim); font-size:14px; letter-spacing:.03em; }
+
+  /* ---------- RETAKE REVIEW ---------- */
+  #screen-retake-review{ background:var(--bg); }
+  .rr-wrap{ max-width:820px; width:100%; padding:30px; text-align:center; }
+  .rr-wrap h2{ font-family:Fraunces, serif; font-style:italic; font-weight:600; font-size:30px; margin:0 0 6px; }
+  .rr-wrap .rr-sub{ color:var(--text-dim); font-size:14px; margin-bottom:26px; }
+  .thumb-row{ display:flex; gap:16px; flex-wrap:wrap; justify-content:center; margin-bottom:30px; }
+  .thumb-item{ display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .thumb-item img{ width:130px; height:130px; object-fit:cover; border-radius:4px; box-shadow:var(--shadow); }
+  .small-btn{ padding:8px 16px; font-size:12.5px; border-radius:30px; border:1px solid var(--line); background:var(--panel); color:var(--text); cursor:pointer; }
+  .small-btn:hover{ border-color:var(--accent-soft); }
+  .rr-actions{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .text-link{ margin-top:20px; font-size:13px; color:var(--text-dim); text-decoration:underline; cursor:pointer; }
+
+  /* ---------- REVIEW ---------- */
+  #screen-review{ background:var(--bg); flex-direction:row; gap:48px; padding:30px; }
+  .review-print-wrap{ display:flex; align-items:center; justify-content:center; flex:1.1; height:100%; }
+  #review-canvas-holder{ background:transparent; padding:0; border-radius:2px; }
+  #review-canvas-holder canvas{ display:block; max-height:78vh; max-width:36vw; border:none; box-shadow:var(--shadow); }
+  .review-actions{ display:flex; flex-direction:column; gap:14px; width:280px; }
+  .review-actions h3{ font-family:Fraunces, serif; font-weight:600; font-size:26px; margin:0 0 4px; font-style:italic; }
+  .review-actions p.sub{ color:var(--text-dim); font-size:13px; margin:0 0 10px; }
+  .btn{
+    padding:15px 18px; border-radius:var(--radius); border:1px solid var(--line);
+    background:var(--panel); color:var(--text); font-family:Inter; font-weight:600; font-size:14.5px;
+    cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between;
+    transition:background .2s, border-color .2s;
+  }
+  .btn:hover{ border-color:var(--accent-soft); }
+  .btn.primary{ background:var(--accent); color:#1c1408; border-color:var(--accent); }
+  .btn.primary:hover{ background:var(--accent-soft); }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .btn small{ font-weight:400; opacity:.75; display:block; font-size:11.5px; margin-top:2px; }
+  .status-line{ font-size:12.5px; color:var(--text-dim); min-height:16px; }
+
+  /* ---------- QR ---------- */
+  #screen-qr{ background:var(--bg); }
+  .ticket{
+    background:var(--paper); color:var(--ink); padding:36px 40px 30px; border-radius:2px;
+    box-shadow:var(--shadow); text-align:center; position:relative;
+  }
+  .ticket:before, .ticket:after{
+    content:""; position:absolute; width:22px; height:22px; background:var(--bg); border-radius:50%; top:50%; transform:translateY(-50%);
+  }
+  .ticket:before{ left:-11px; } .ticket:after{ right:-11px; }
+  .ticket h3{ font-family:Fraunces, serif; font-style:italic; font-weight:600; font-size:22px; margin:0 0 14px; }
+  #qr-target{ display:flex; align-items:center; justify-content:center; margin:0 auto 14px; }
+  .ticket p{ font-size:13px; color:#5a4f3d; max-width:260px; margin:0 auto; line-height:1.5; }
+  .qr-actions{ margin-top:26px; display:flex; gap:12px; }
+
+  @media (max-width: 820px){
+    #screen-review{ flex-direction:column; gap:20px; padding:16px; }
+    #review-canvas-holder canvas{ max-width:80vw; max-height:46vh; }
+    .review-actions{ width:100%; flex-direction:row; flex-wrap:wrap; }
+    .review-actions .btn{ flex:1 1 auto; min-width:150px; }
+  }
+
+  @media print{
+    body *{ visibility:hidden; }
+    #print-canvas, #print-canvas *{ visibility:visible; }
+    #print-canvas{ position:fixed; top:0; left:0; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- IDLE -->
+  <section class="screen active" id="screen-idle">
+    <div id="idle-bg"></div>
+    <div id="idle-veil"></div>
+    <div class="sprockets left"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="sprockets right"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="gear" id="gear-btn" title="Booth settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </div>
+    <div class="idle-content">
+      <div class="brand-eyebrow">SHUTTER &amp; STRIP · PHOTO BOOTH</div>
+      <h1 class="brand-title" id="event-title-display">Say Cheese</h1>
+      <p class="brand-sub" id="event-sub-display">Strike a pose — your photos will be ready to scan and keep in seconds.</p>
+      <button class="shutter-btn" id="start-btn">START</button>
+      <div class="idle-hint">Tap the shutter to begin</div>
+    </div>
+  </section>
+
+  <!-- SETUP (guest picks how many photos) -->
+  <section class="screen" id="screen-customize">
+    <div class="customize-wrap">
+      <h2>Set up your photos</h2>
+      <p class="customize-sub">Pick how many shots you want.</p>
+
+      <div class="picker-group">
+        <label>How many photos?</label>
+        <div class="pill-row" id="count-picker"></div>
+      </div>
+
+      <button class="shutter-btn small" id="customize-continue-btn">Start photos</button>
+    </div>
+  </section>
+
+  <!-- CAPTURE -->
+  <section class="screen" id="screen-capture">
+    <video id="capture-video" autoplay muted playsinline></video>
+    <div class="capture-veil"></div>
+    <div id="crop-guide"><span class="crop-guide-label">Stay inside the frame</span></div>
+    <div class="shot-frames" id="shot-frames"></div>
+    <div class="countdown" id="countdown-el">5</div>
+    <div class="capture-caption" id="capture-caption">Get ready...</div>
+  </section>
+
+  <!-- RETAKE REVIEW -->
+  <section class="screen" id="screen-retake-review">
+    <div class="rr-wrap">
+      <h2>Check your shots</h2>
+      <p class="rr-sub">Happy with all of them? Continue. Not keen on one? Retake just that shot.</p>
+      <div class="thumb-row" id="retake-thumbs"></div>
+      <div class="rr-actions">
+        <button class="btn primary" id="rr-continue-btn" style="display:inline-flex;">Continue</button>
+      </div>
+      <div class="text-link" id="rr-startover-link">Start a brand new session instead</div>
+    </div>
+  </section>
+
+  <!-- FILTER (guest picks a filter, after they're happy with the shots) -->
+  <section class="screen" id="screen-filter">
+    <div class="customize-wrap">
+      <h2>Pick a filter</h2>
+      <p class="customize-sub">Choose how your photos will look on the print.</p>
+
+      <div class="picker-group">
+        <div class="filter-row" id="filter-picker"></div>
+      </div>
+
+      <button class="shutter-btn small" id="filter-continue-btn">Continue to print</button>
+    </div>
+  </section>
+
+  <!-- REVIEW -->
+  <section class="screen" id="screen-review">
+    <div class="review-print-wrap">
+      <div id="review-canvas-holder"><canvas id="review-canvas"></canvas></div>
+    </div>
+    <div class="review-actions">
+      <h3>Looking good</h3>
+      <p class="sub">Print a copy, or send it straight to the cloud.</p>
+      <button class="btn primary" id="print-btn">Print photo<small>Sends the framed print to the connected printer</small></button>
+      <button class="btn" id="upload-btn">Save &amp; get QR code<small>Uploads to Google Drive for guests to scan</small></button>
+      <button class="btn" id="download-btn">Download image<small>Save a copy to this iPad</small></button>
+      <button class="btn" id="retake-btn">Retake a photo<small>Go back and redo any shot</small></button>
+      <div class="status-line" id="upload-status"></div>
+    </div>
+  </section>
+
+  <!-- QR -->
+  <section class="screen" id="screen-qr">
+    <div class="ticket">
+      <h3>Scan to save your photos</h3>
+      <div id="qr-target"></div>
+      <p>Point your phone's camera at the code to open and download your photo from Google Drive.</p>
+    </div>
+    <div class="qr-actions">
+      <button class="btn" id="qr-newsession-btn">New session</button>
+    </div>
+  </section>
+
+</div>
+
+<div class="flash" id="flash-el"></div>
+
+<!-- SETTINGS DRAWER (operator-side defaults) -->
+<div id="drawer-backdrop"></div>
+<div id="drawer">
+  <h2>Booth settings</h2>
+  <div class="drawer-note">Set defaults here. Guests can still pick their own photo count, frame, and filter on screen before each session.</div>
+
+  <div class="field">
+    <label>Event name (shown on screen)</label>
+    <input type="text" id="set-eventname" value="Say Cheese">
+  </div>
+  <div class="field">
+    <label>Tagline</label>
+    <input type="text" id="set-tagline" value="Strike a pose — your photos will be ready to scan and keep in seconds.">
+  </div>
+
+  <hr class="divider">
+
+  <div class="field">
+    <label>Paper size loaded in the printer</label>
+    <select id="set-paper">
+      <option value="4x6">4 × 6 in</option>
+      <option value="5x7">5 × 7 in</option>
+      <option value="2x6" selected>2 × 6 in (classic strip)</option>
+      <option value="4x4">4 × 4 in (square)</option>
+      <option value="6x8">6 × 8 in</option>
+    </select>
+  </div>
+
+  <hr class="divider">
+
+  <div class="field">
+    <label>Event background (used behind every photo &amp; frame)</label>
+    <input type="file" id="set-bgimage" accept="image/*">
+  </div>
+  <div id="bg-preview-wrap" style="display:none; margin:-6px 0 14px;">
+    <img id="bg-preview" style="width:100%; max-height:110px; object-fit:cover; border-radius:4px; border:1px solid var(--line);">
+    <div class="text-link" id="bg-clear-link" style="margin-top:8px; font-size:12px;">Remove background image</div>
+  </div>
+  <div class="help-box" style="margin-bottom:18px;">
+    Upload a branded backdrop (e.g. a wedding pattern or company logo tile) once per event. It stays behind every frame style and filter so all prints from this booth session look consistent.
+  </div>
+
+  <hr class="divider">
+
+  <div class="toggle-row">
+    <span>Auto-upload to Google Drive</span>
+    <label class="switch"><input type="checkbox" id="set-autoupload"><span class="slider-tog"></span></label>
+  </div>
+
+  <div class="field" style="margin-top:14px;">
+    <label>Google OAuth Client ID</label>
+    <input type="text" id="set-clientid" placeholder="xxxxxxxx.apps.googleusercontent.com">
+  </div>
+  <div class="field">
+    <label>Drive folder ID (optional)</label>
+    <input type="text" id="set-folderid" placeholder="Leave blank to save to My Drive root">
+  </div>
+  <div class="help-box">
+    Uploading needs a Google Cloud OAuth Client ID with the Drive API enabled, and this page hosted on a real https:// address (this won't work inside the Claude preview — download the file and host it, e.g. on GitHub Pages, then add that address as an Authorized JavaScript origin in Google Cloud Console).
+  </div>
+
+  <div class="drawer-close" id="drawer-close-btn">Close settings</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- state ---------------- */
+  const settings = {
+    eventName:"Say Cheese",
+    tagline:"Strike a pose — your photos will be ready to scan and keep in seconds.",
+    count:4, paper:"2x6", filter:"warm", frame:"flat",
+    autoUpload:false, clientId:"", folderId:"",
+    backgroundImage:null, backgroundImageURL:null
+  };
+  const FRAME_DEFAULT_BG = { flat:"#f7f2e7", gallery:"#f4ecdd", confetti:"#efe4cf", botanical:"#f1ede1", minimal:"#f6f3ea", polaroid:"#e8ddc8" };
+  const PRINT_DPI = 600; // raised from 300 — sharper prints/downloads, less visible blur or grain
+  const PAPER_INCHES = { "4x6":{w:4,h:6}, "5x7":{w:5,h:7}, "2x6":{w:2,h:6}, "4x4":{w:4,h:4}, "6x8":{w:6,h:8} };
+  const PAPER_SIZES = {};
+  Object.keys(PAPER_INCHES).forEach(k=>{
+    const {w,h} = PAPER_INCHES[k];
+    PAPER_SIZES[k] = { w: w*PRINT_DPI, h: h*PRINT_DPI, inW:w, inH:h };
+  });
+  /* Safari/iOS never shipped CanvasRenderingContext2D.filter, so ctx.filter
+     silently does nothing on an iPad — that's why filters looked "broken".
+     Instead we apply the same math CSS filters use, but manually, pixel by
+     pixel, which works identically in every browser including Safari. */
+  function grayscaleMatrix(amount){
+    const a = 1-amount;
+    return [
+      0.2126+0.7874*a, 0.7152-0.7152*a, 0.0722-0.0722*a,
+      0.2126-0.2126*a, 0.7152+0.2848*a, 0.0722-0.0722*a,
+      0.2126-0.2126*a, 0.7152-0.7152*a, 0.0722+0.9278*a
+    ];
+  }
+  function sepiaMatrix(amount){
+    const a = 1-amount;
+    return [
+      0.393+0.607*a, 0.769-0.769*a, 0.189-0.189*a,
+      0.349-0.349*a, 0.686+0.314*a, 0.168-0.168*a,
+      0.272-0.272*a, 0.534-0.534*a, 0.131+0.869*a
+    ];
+  }
+  function saturateMatrix(s){
+    return [
+      0.213+0.787*s, 0.715-0.715*s, 0.072-0.072*s,
+      0.213-0.213*s, 0.715+0.285*s, 0.072-0.072*s,
+      0.213-0.213*s, 0.715-0.715*s, 0.072+0.928*s
+    ];
+  }
+  function hueRotateMatrix(deg){
+    const rad = deg*Math.PI/180, c = Math.cos(rad), s = Math.sin(rad);
+    return [
+      0.213+c*0.787-s*0.213, 0.715-c*0.715-s*0.715, 0.072-c*0.072+s*0.928,
+      0.213-c*0.213+s*0.143, 0.715+c*0.285+s*0.140, 0.072-c*0.072-s*0.283,
+      0.213-c*0.213-s*0.787, 0.715-c*0.715+s*0.715, 0.072+c*0.928+s*0.072
+    ];
+  }
+  // Each filter is an ordered list of operations, applied per pixel —
+  // this mirrors what the original CSS filter strings described.
+  const FILTERS = {
+    none: [],
+    noir: [ {m:grayscaleMatrix(1)}, {contrast:1.1} ],
+    sepia:[ {m:sepiaMatrix(.75)}, {contrast:1.05}, {brightness:1.02} ],
+    vivid:[ {m:saturateMatrix(1.6)}, {contrast:1.15} ],
+    cool: [ {m:saturateMatrix(.9)}, {m:hueRotateMatrix(-8)}, {brightness:1.05}, {contrast:.95} ],
+    warm: [ {m:sepiaMatrix(.25)}, {m:saturateMatrix(1.2)}, {contrast:1.05}, {brightness:1.05} ]
+  };
+  function clamp255(v){ return v<0?0:v>255?255:v; }
+  function applyFilterToCanvas(canvas, filterKey){
+    const ops = FILTERS[filterKey];
+    if (!ops || !ops.length) return;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+    if (!w || !h) return;
+    const imgData = ctx.getImageData(0,0,w,h);
+    const d = imgData.data;
+    for (let i=0;i<d.length;i+=4){
+      let r=d[i], g=d[i+1], b=d[i+2];
+      for (const op of ops){
+        if (op.m){
+          const m = op.m;
+          const nr = r*m[0]+g*m[1]+b*m[2];
+          const ng = r*m[3]+g*m[4]+b*m[5];
+          const nb = r*m[6]+g*m[7]+b*m[8];
+          r=nr; g=ng; b=nb;
+        } else if (op.contrast!==undefined){
+          const c = op.contrast;
+          r=(r-128)*c+128; g=(g-128)*c+128; b=(b-128)*c+128;
+        } else if (op.brightness!==undefined){
+          const br = op.brightness;
+          r*=br; g*=br; b*=br;
+        }
+      }
+      d[i]=clamp255(r); d[i+1]=clamp255(g); d[i+2]=clamp255(b);
+    }
+    ctx.putImageData(imgData,0,0);
+  }
+  const FRAME_LABELS = { flat:"Flat Strip", gallery:"Gallery Mat", polaroid:"Polaroid", confetti:"Confetti", botanical:"Botanical", minimal:"Minimal" };
+  const FILTER_LABELS = { none:"None", noir:"Noir", sepia:"Sepia", vivid:"Vivid", cool:"Cool", warm:"Warm" };
+
+  let shots = [];
+  let captureStream;
+  let composedBlob = null;
+
+  const $ = (id)=>document.getElementById(id);
+  function show(screenId){
+    document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+    $(screenId).classList.add("active");
+  }
+
+  /* ---------------- settings drawer (operator defaults) ---------------- */
+  function openDrawer(){ $("drawer").classList.add("open"); $("drawer-backdrop").classList.add("open"); }
+  function closeDrawer(){ $("drawer").classList.remove("open"); $("drawer-backdrop").classList.remove("open"); applyOperatorSettings(); }
+  $("gear-btn").onclick = openDrawer;
+  $("drawer-close-btn").onclick = closeDrawer;
+  $("drawer-backdrop").onclick = closeDrawer;
+
+  function applyOperatorSettings(){
+    settings.eventName = $("set-eventname").value.trim() || "Say Cheese";
+    settings.tagline = $("set-tagline").value.trim();
+    settings.paper = $("set-paper").value;
+    settings.autoUpload = $("set-autoupload").checked;
+    settings.clientId = $("set-clientid").value.trim();
+    settings.folderId = $("set-folderid").value.trim();
+    $("event-title-display").textContent = settings.eventName;
+    $("event-sub-display").textContent = settings.tagline;
+  }
+
+  $("set-bgimage").addEventListener("change", (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        settings.backgroundImage = img;
+        settings.backgroundImageURL = reader.result;
+        $("bg-preview").src = reader.result;
+        $("bg-preview-wrap").style.display = "block";
+        applyIdleBackground();
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+  $("bg-clear-link").addEventListener("click", ()=>{
+    settings.backgroundImage = null;
+    settings.backgroundImageURL = null;
+    $("set-bgimage").value = "";
+    $("bg-preview-wrap").style.display = "none";
+    applyIdleBackground();
+  });
+
+  /* ---------------- idle background ---------------- */
+  // The idle (start) screen no longer opens the camera at all — it just shows a
+  // static branded background (the uploaded event image if there is one, else
+  // a plain dark tone). The camera is only ever opened once a session starts.
+  function applyIdleBackground(){
+    const el = $("idle-bg");
+    if (settings.backgroundImageURL){
+      el.style.backgroundImage = `url("${settings.backgroundImageURL}")`;
+    } else {
+      el.style.backgroundImage = "none";
+    }
+  }
+
+  /* ---------------- background + frame drawing (shared by swatches + final print) ---------------- */
+  function drawBackground(ctx, w, h, name){
+    if (settings.backgroundImage){
+      drawCover(ctx, settings.backgroundImage, 0, 0, w, h);
+    } else {
+      ctx.fillStyle = FRAME_DEFAULT_BG[name] || "#f4ecdd";
+      ctx.fillRect(0,0,w,h);
+    }
+  }
+
+  function drawFrame(ctx, w, h, name){
+    drawBackground(ctx, w, h, name);
+    ctx.save();
+    if (name === "flat"){
+      // Intentionally nothing here — the background photo (usually a guest-
+      // uploaded backdrop that already has the event name printed on it)
+      // is left untouched, with no extra border or mat drawn on top.
+    } else if (name === "gallery"){
+      ctx.strokeStyle = "#c98a3e"; ctx.lineWidth = Math.max(1,w*0.012);
+      ctx.strokeRect(w*0.06,h*0.06,w*0.88,h*0.88);
+      ctx.strokeStyle = "rgba(0,0,0,.25)"; ctx.lineWidth=1;
+      ctx.strokeRect(w*0.08,h*0.08,w*0.84,h*0.84);
+    } else if (name === "confetti"){
+      const colors = ["#c98a3e","#8e4b46","#7c8b6c","#d9b26b"];
+      let seed = 42;
+      const rnd = ()=>{ seed = (seed*9301+49297)%233280; return seed/233280; };
+      for(let i=0;i<70;i++){
+        ctx.fillStyle = colors[i%colors.length];
+        const x = rnd()*w, y = rnd()*h;
+        if (x>w*0.09 && x<w*0.91 && y>h*0.09 && y<h*0.91) continue;
+        ctx.beginPath(); ctx.arc(x,y, Math.max(1.5,w*0.015+rnd()*w*0.015), 0, Math.PI*2); ctx.fill();
+      }
+      ctx.strokeStyle="#2a2318"; ctx.lineWidth=Math.max(1,w*0.018); ctx.strokeRect(w*0.07,h*0.07,w*0.86,h*0.86);
+    } else if (name === "botanical"){
+      ctx.strokeStyle = "#7c8b6c"; ctx.lineWidth = Math.max(1,w*0.012);
+      ctx.strokeRect(w*0.07,h*0.07,w*0.86,h*0.86);
+      const off = w*0.07, r = w*0.09;
+      const corners = [[off,off,1,1],[w-off,off,-1,1],[off,h-off,1,-1],[w-off,h-off,-1,-1]];
+      corners.forEach(([cx,cy,sx,sy])=>{
+        ctx.save(); ctx.translate(cx,cy); ctx.scale(sx,sy);
+        ctx.strokeStyle="#7c8b6c"; ctx.lineWidth=Math.max(1,w*0.01);
+        ctx.beginPath(); ctx.moveTo(0,r); ctx.quadraticCurveTo(r*0.7,r*0.7,r,0); ctx.stroke();
+        for(let k=0;k<3;k++){
+          ctx.beginPath(); ctx.arc(r*0.3+k*r*0.27, r*0.3+k*r*0.27, Math.max(1,w*0.011), 0, Math.PI*2); ctx.fillStyle="#c98a3e"; ctx.fill();
+        }
+        ctx.restore();
+      });
+    } else if (name === "minimal"){
+      ctx.strokeStyle = "#2a2318"; ctx.lineWidth = 1;
+      ctx.strokeRect(w*0.06,h*0.06,w*0.88,h*0.88);
+      const tick=w*0.04;
+      [[w*0.06,h*0.06,1,1],[w*0.94,h*0.06,-1,1],[w*0.06,h*0.94,1,-1],[w*0.94,h*0.94,-1,-1]].forEach(([x,y,sx,sy])=>{
+        ctx.beginPath(); ctx.moveTo(x,y+sy*tick); ctx.lineTo(x,y); ctx.lineTo(x+sx*tick,y); ctx.stroke();
+      });
+    }
+    ctx.restore();
+  }
+
+  /* ---------------- guest customize screen ---------------- */
+  function buildCountPicker(){
+    const wrap = $("count-picker"); wrap.innerHTML = "";
+    [1,3,4,6].forEach(n=>{
+      const b = document.createElement("button");
+      b.className = "pill" + (n===settings.count ? " active":"");
+      b.textContent = n===1 ? "1 photo" : n+" photos";
+      b.onclick = ()=>{ settings.count = n; buildCountPicker(); };
+      wrap.appendChild(b);
+    });
+  }
+
+  function buildFilterPicker(){
+    const wrap = $("filter-picker"); wrap.innerHTML = "";
+    Object.keys(FILTER_LABELS).forEach(key=>{
+      const btn = document.createElement("button");
+      btn.className = "filter-swatch" + (key===settings.filter ? " active":"");
+      const c = document.createElement("canvas"); c.width=54; c.height=54;
+      const ctx = c.getContext("2d");
+      const grad = ctx.createRadialGradient(27,22,4,27,27,30);
+      grad.addColorStop(0,"#e8b98a"); grad.addColorStop(0.6,"#c9754f"); grad.addColorStop(1,"#5a3a2e");
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(27,27,27,0,Math.PI*2); ctx.fill();
+      applyFilterToCanvas(c, key);
+      const label = document.createElement("span"); label.textContent = FILTER_LABELS[key];
+      btn.appendChild(c); btn.appendChild(label);
+      btn.onclick = ()=>{ settings.filter = key; buildFilterPicker(); };
+      wrap.appendChild(btn);
+    });
+  }
+
+  $("start-btn").onclick = ()=>{
+    buildCountPicker();
+    show("screen-customize");
+  };
+  $("customize-continue-btn").onclick = ()=> startSession();
+
+  /* ---------------- capture flow ---------------- */
+  function buildShotFrames(n){
+    const el = $("shot-frames"); el.innerHTML = "";
+    for(let i=0;i<n;i++){ const d=document.createElement("div"); d.className="f"; el.appendChild(d); }
+  }
+  function markShotDone(i){ $("shot-frames").children[i].classList.add("done"); }
+
+  // Sizes the on-screen crop guide to the exact aspect ratio each shot will be
+  // cropped to in the final print, so the guest can see and stay inside the
+  // part of the frame that actually survives compositing.
+  function updateCropGuide(){
+    const guide = $("crop-guide");
+    if (!guide) return;
+    const { cellW, cellH } = getLayoutMetrics(settings.count);
+    const targetAspect = cellW / cellH;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let gw, gh;
+    if (vw / vh > targetAspect){
+      gh = vh * 0.86;
+      gw = gh * targetAspect;
+    } else {
+      gw = vw * 0.86;
+      gh = gw / targetAspect;
+    }
+    guide.style.width = gw + "px";
+    guide.style.height = gh + "px";
+    guide.style.left = ((vw - gw) / 2) + "px";
+    guide.style.top = ((vh - gh) / 2) + "px";
+  }
+  window.addEventListener("resize", ()=>{
+    if ($("screen-capture").classList.contains("active")) updateCropGuide();
+  });
+
+  function beep(){
+    try{
+      const ctx = new (window.AudioContext||window.webkitAudioContext)();
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type="sine"; o.frequency.value=880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.06, ctx.currentTime);
+      o.start(); o.stop(ctx.currentTime+0.09);
+    }catch(e){}
+  }
+
+  function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+  async function startSession(){
+    shots = [];
+    buildShotFrames(settings.count);
+    show("screen-capture");
+    updateCropGuide();
+    try{
+      captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:3840}, height:{ideal:2160} }, audio:false });
+      $("capture-video").srcObject = captureStream;
+    }catch(e){
+      alert("Couldn't access the camera. Please allow camera access and try again.");
+      show("screen-idle"); return;
+    }
+    await wait(400);
+    for(let i=0;i<settings.count;i++){
+      $("capture-caption").textContent = `Photo ${i+1} of ${settings.count}`;
+      await runCountdown(5);
+      await capturePhoto();
+      markShotDone(i);
+      await wait(500);
+    }
+    stopCaptureStream();
+    renderRetakeReview();
+    show("screen-retake-review");
+  }
+
+  function stopCaptureStream(){
+    if (captureStream){ captureStream.getTracks().forEach(t=>t.stop()); captureStream=null; }
+  }
+
+  async function runCountdown(n){
+    const el = $("countdown-el");
+    for(let i=n;i>0;i--){ el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)"; await wait(730); }
+    el.textContent = "";
+  }
+
+  async function capturePhoto(replaceIndex){
+    const video = $("capture-video");
+    const c = document.createElement("canvas");
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    const ctx = c.getContext("2d");
+    ctx.translate(c.width,0); ctx.scale(-1,1);
+    ctx.drawImage(video,0,0,c.width,c.height);
+    if (typeof replaceIndex === "number") shots[replaceIndex] = c; else shots.push(c);
+    $("flash-el").classList.remove("go"); void $("flash-el").offsetWidth; $("flash-el").classList.add("go");
+    beep();
+  }
+
+  /* ---------------- retake review ---------------- */
+  function renderRetakeReview(){
+    const wrap = $("retake-thumbs"); wrap.innerHTML = "";
+    shots.forEach((c,i)=>{
+      const item = document.createElement("div"); item.className = "thumb-item";
+      const img = document.createElement("img"); img.src = c.toDataURL("image/jpeg",0.85);
+      const btn = document.createElement("button"); btn.className = "small-btn"; btn.textContent = "Retake";
+      btn.onclick = ()=> retakeSingle(i);
+      item.appendChild(img); item.appendChild(btn);
+      wrap.appendChild(item);
+    });
+  }
+
+  async function retakeSingle(index){
+    show("screen-capture");
+    buildShotFrames(shots.length);
+    updateCropGuide();
+    for(let i=0;i<shots.length;i++){ if(i!==index) markShotDone(i); }
+    try{
+      captureStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:3840}, height:{ideal:2160} }, audio:false });
+      $("capture-video").srcObject = captureStream;
+    }catch(e){ alert("Couldn't access the camera."); show("screen-retake-review"); return; }
+    await wait(400);
+    $("capture-caption").textContent = `Retaking photo ${index+1}`;
+    await runCountdown(5);
+    await capturePhoto(index);
+    markShotDone(index);
+    await wait(400);
+    stopCaptureStream();
+    renderRetakeReview();
+    show("screen-retake-review");
+  }
+
+  $("rr-continue-btn").onclick = ()=>{ buildFilterPicker(); show("screen-filter"); };
+  $("filter-continue-btn").onclick = ()=>{ composePrint(); show("screen-review"); };
+  $("rr-startover-link").onclick = ()=> show("screen-idle");
+
+  /* ---------------- compose print layout ---------------- */
+  function gridFor(count, w, h){
+    const aspect = w/h;
+    if (aspect < 0.42) return {cols:1, rows:count};
+    let cols = Math.max(1, Math.round(Math.sqrt(count * aspect)));
+    cols = Math.min(cols, count);
+    const rows = Math.ceil(count/cols);
+    return {cols, rows};
+  }
+
+  // Shared by composePrint() and the live crop guide, so the guide the guest
+  // sees while posing always matches exactly what the final print will keep.
+  function getLayoutMetrics(count){
+    const paper = PAPER_SIZES[settings.paper];
+    const isFlat = settings.frame === "flat";
+    const marginX = isFlat ? paper.w*0.045 : (settings.frame === "minimal" ? 30 : 34);
+    const marginTop = isFlat ? paper.h*0.045 : (settings.frame === "minimal" ? 30 : 34);
+    const marginBottom = isFlat ? paper.h*0.22 : (settings.frame === "minimal" ? 30 : 34);
+    const innerW = paper.w - marginX*2;
+    const innerH = paper.h - marginTop - marginBottom;
+    const {cols, rows} = gridFor(count, innerW, innerH);
+    const gap = isFlat ? paper.w*0.018 : 12;
+    const cellW = (innerW - gap*(cols-1))/cols;
+    const cellH = (innerH - gap*(rows-1))/rows;
+    return { paper, isFlat, marginX, marginTop, marginBottom, innerW, innerH, cols, rows, gap, cellW, cellH };
+  }
+
+  function setHQSmoothing(ctx){
+    ctx.imageSmoothingEnabled = true;
+    if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  }
+
+  // Draws one shot into an off-screen canvas sized to its final cell, applies
+  // the chosen filter to that off-screen canvas (real pixel math, so it works
+  // on iPad/Safari), then stamps the filtered result onto the main canvas.
+  function drawFilteredCover(ctx, shotCanvas, x, y, w, h){
+    const off = document.createElement("canvas");
+    off.width = Math.max(1, Math.round(w));
+    off.height = Math.max(1, Math.round(h));
+    const offCtx = off.getContext("2d");
+    setHQSmoothing(offCtx);
+    drawCover(offCtx, shotCanvas, 0, 0, off.width, off.height);
+    applyFilterToCanvas(off, settings.filter);
+    setHQSmoothing(ctx);
+    ctx.drawImage(off, x, y, w, h);
+  }
+
+  function composePrint(){
+    const { paper, isFlat, marginX, marginTop, marginBottom, cols, gap, cellW, cellH } = getLayoutMetrics(shots.length);
+    const canvas = $("review-canvas");
+    canvas.width = paper.w; canvas.height = paper.h;
+    const ctx = canvas.getContext("2d");
+    setHQSmoothing(ctx);
+
+    drawFrame(ctx, paper.w, paper.h, settings.frame);
+
+    const innerX = marginX, innerY = marginTop;
+
+    shots.forEach((shotCanvas, i)=>{
+      const col = i % cols, row = Math.floor(i/cols);
+      let x = innerX + col*(cellW+gap);
+      let y = innerY + row*(cellH+gap);
+      let w = cellW, h = cellH;
+
+      ctx.save();
+      if (settings.frame === "polaroid"){
+        const rot = ((i%2===0)?-1:1) * (2 + (i%3));
+        ctx.translate(x+w/2, y+h/2);
+        ctx.rotate(rot*Math.PI/180);
+        ctx.translate(-w/2, -h/2);
+        x=0; y=0;
+        const pad = 10, bottomPad = 26;
+        ctx.fillStyle="#fff"; ctx.shadowColor="rgba(0,0,0,.35)"; ctx.shadowBlur=14; ctx.shadowOffsetY=6;
+        ctx.fillRect(x,y,w,h);
+        ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+        drawFilteredCover(ctx, shotCanvas, x+pad, y+pad, w-pad*2, h-pad-bottomPad);
+      } else {
+        // No outline/border drawn around the photo — it lays flat on the background.
+        drawFilteredCover(ctx, shotCanvas, x, y, w, h);
+      }
+      ctx.restore();
+    });
+
+    if (!isFlat){
+      ctx.fillStyle = "rgba(0,0,0,.65)";
+      ctx.font = "italic 600 " + Math.max(14, paper.w*0.032) + "px Georgia, serif";
+      ctx.textAlign = "center";
+      ctx.fillText(settings.eventName, paper.w/2, paper.h - marginBottom/1.8);
+    }
+    // When frame is "flat" we deliberately draw no text — the uploaded
+    // background photo is expected to already have the event name on it.
+
+    canvas.toBlob(b=>{ composedBlob = b; }, "image/jpeg", 0.98);
+  }
+
+  function drawCover(ctx, srcCanvas, x, y, w, h){
+    const sw = srcCanvas.width, sh = srcCanvas.height;
+    const srcAspect = sw/sh, dstAspect = w/h;
+    let cropW, cropH, cropX, cropY;
+    if (srcAspect > dstAspect){ cropH = sh; cropW = sh*dstAspect; cropX=(sw-cropW)/2; cropY=0; }
+    else { cropW = sw; cropH = sw/dstAspect; cropX=0; cropY=(sh-cropH)/2; }
+    ctx.drawImage(srcCanvas, cropX, cropY, cropW, cropH, x, y, w, h);
+  }
+
+  /* ---------------- review actions ---------------- */
+  $("retake-btn").onclick = ()=>{ renderRetakeReview(); show("screen-retake-review"); };
+
+  $("print-btn").onclick = ()=>{
+    const paper = PAPER_SIZES[settings.paper];
+    const src = $("review-canvas");
+    const printWrap = document.createElement("div");
+    printWrap.id = "print-canvas";
+    const img = new Image(); img.src = src.toDataURL("image/jpeg",0.98);
+    img.style.width = "100%";
+    printWrap.appendChild(img);
+    document.body.appendChild(printWrap);
+    const styleTag = document.createElement("style");
+    styleTag.textContent = `@page{ size:${paper.inW}in ${paper.inH}in; margin:0; }`;
+    document.head.appendChild(styleTag);
+    setTimeout(()=>{ window.print(); document.body.removeChild(printWrap); document.head.removeChild(styleTag); }, 150);
+  };
+
+  $("download-btn").onclick = ()=>{
+    const a = document.createElement("a");
+    a.download = (settings.eventName||"photo-booth")+"-"+Date.now()+".jpg";
+    a.href = $("review-canvas").toDataURL("image/jpeg",0.98);
+    a.click();
+  };
+
+  /* ---------------- Google Drive upload ---------------- */
+  function ensureGIS(){
+    return new Promise((resolve,reject)=>{
+      if (window.google && window.google.accounts) return resolve();
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.onload = ()=>resolve();
+      s.onerror = ()=>reject(new Error("gis-load-failed"));
+      document.head.appendChild(s);
+      setTimeout(()=>{ if(!(window.google&&window.google.accounts)) reject(new Error("gis-timeout")); }, 6000);
+    });
+  }
+
+  function getAccessToken(){
+    return ensureGIS().then(()=>new Promise((resolve,reject)=>{
+      try{
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: settings.clientId,
+          scope: "https://www.googleapis.com/auth/drive.file",
+          callback: (resp)=> resp.error ? reject(resp) : resolve(resp.access_token)
+        });
+        tokenClient.requestAccessToken();
+      }catch(e){ reject(e); }
+    }));
+  }
+
+  async function uploadToDrive(blob){
+    const token = await getAccessToken();
+    const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+".jpg", mimeType:"image/jpeg" };
+    if (settings.folderId) metadata.parents = [settings.folderId];
+    const form = new FormData();
+    form.append("metadata", new Blob([JSON.stringify(metadata)], {type:"application/json"}));
+    form.append("file", blob);
+    const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
+      method:"POST", headers:{ Authorization:"Bearer "+token }, body:form
+    });
+    if (!res.ok) throw new Error("Upload failed ("+res.status+")");
+    const data = await res.json();
+    await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
+      method:"POST",
+      headers:{ Authorization:"Bearer "+token, "Content-Type":"application/json" },
+      body: JSON.stringify({ role:"reader", type:"anyone" })
+    }).catch(()=>{});
+    return data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`;
+  }
+
+  function renderQR(link){
+    const target = $("qr-target");
+    target.innerHTML = "";
+    // eslint-disable-next-line no-undef
+    new QRCode(target, { text: link, width:196, height:196, colorDark:"#2a2318", colorLight:"#f4ecdd" });
+  }
+
+  $("upload-btn").onclick = async ()=>{
+    const statusEl = $("upload-status");
+    if (!settings.clientId){
+      statusEl.textContent = "Add a Google OAuth Client ID in Settings first.";
+      return;
+    }
+    if (!composedBlob){ statusEl.textContent = "No photo ready yet."; return; }
+    statusEl.textContent = "Uploading to Google Drive...";
+    $("upload-btn").disabled = true;
+    try{
+      const link = await uploadToDrive(composedBlob);
+      statusEl.textContent = "";
+      renderQR(link);
+      show("screen-qr");
+    }catch(e){
+      console.warn(e);
+      if (e && (e.message === "gis-load-failed" || e.message === "gis-timeout")){
+        statusEl.textContent = "Google Sign-In can't load in this preview — host this file on your own https:// address to enable uploads.";
+      } else {
+        statusEl.textContent = "Couldn't upload right now. Check the Client ID and try again.";
+      }
+    }
+    $("upload-btn").disabled = false;
+  };
+
+  $("qr-newsession-btn").onclick = ()=> show("screen-idle");
+  let qrAutoReturn;
+  const qrObserver = new MutationObserver(()=>{
+    if ($("screen-qr").classList.contains("active")){
+      clearTimeout(qrAutoReturn);
+      qrAutoReturn = setTimeout(()=> show("screen-idle"), 25000);
+    }
+  });
+  qrObserver.observe($("screen-qr"), {attributes:true, attributeFilter:["class"]});
+
+  /* ---------------- init ---------------- */
+  applyOperatorSettings();
+  applyIdleBackground();
+})();
+</script>
+</body>
+</html>
