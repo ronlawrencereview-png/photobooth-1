@@ -762,11 +762,17 @@
       "video/mp4;codecs=avc1", "video/mp4",                 // Safari / iOS
       "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm" // Chrome / Firefox
     ];
-    return candidates.find(t=> MediaRecorder.isTypeSupported(t)) || null;
+    for (const t of candidates){
+      // Some Safari versions throw on isTypeSupported for certain strings
+      // instead of returning false — never let that escape.
+      try{ if (MediaRecorder.isTypeSupported(t)) return t; }catch(e){ /* try the next candidate */ }
+    }
+    return null;
   }
 
   function recordSessionVideo(mediaStream){
-    const mimeType = pickVideoMimeType();
+    let mimeType = null;
+    try{ mimeType = pickVideoMimeType(); }catch(e){ console.warn("pickVideoMimeType failed:", e); }
     if (!mimeType || !mediaStream) return Promise.resolve(null);
 
     return new Promise((resolve)=>{
@@ -1027,7 +1033,9 @@
     const el = $("countdown-el");
     for(let i=n;i>0;i--){
       el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)";
-      if (onTick) onTick(i);
+      // Never let starting the background video recording break the countdown
+      // itself — if anything here throws, log it and keep the timer running.
+      if (onTick){ try{ onTick(i); }catch(e){ console.warn("countdown onTick error:", e); } }
       await wait(730);
     }
     el.textContent = "";
