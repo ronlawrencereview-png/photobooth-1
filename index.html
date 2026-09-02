@@ -550,42 +550,71 @@
     sepia:[ {m:sepiaMatrix(.75)}, {contrast:1.05}, {brightness:1.02} ],
     vivid:[ {m:saturateMatrix(1.6)}, {contrast:1.15} ],
     cool: [ {m:saturateMatrix(.9)}, {m:hueRotateMatrix(-8)}, {brightness:1.05}, {contrast:.95} ],
-    warm: [ {m:sepiaMatrix(.25)}, {m:saturateMatrix(1.2)}, {contrast:1.05}, {brightness:1.05} ]
+    warm: [ {m:sepiaMatrix(.25)}, {m:saturateMatrix(1.2)}, {contrast:1.05}, {brightness:1.05} ],
+    // Classic warm-toned black & white with punchy contrast, like a
+    // chemical photobooth strip — a light vignette is added separately
+    // below (as a canvas gradient, not per-pixel), so sharpness is untouched.
+    vintage: [ {m:grayscaleMatrix(.9)}, {contrast:1.2}, {brightness:1.03}, {tint:[232,220,198], amount:0.07} ]
   };
+  // Filters listed here get a soft dark vignette applied after color
+  // processing — pure canvas gradient work, so it darkens the corners
+  // without blurring or softening the photo itself.
+  const VIGNETTE_FILTERS = { vintage: 0.32 };
+  function applyVignette(canvas, strength){
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height;
+    const grad = ctx.createRadialGradient(w/2,h/2, Math.min(w,h)*0.22, w/2,h/2, Math.max(w,h)*0.7);
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, `rgba(0,0,0,${strength})`);
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,w,h);
+    ctx.restore();
+  }
   function clamp255(v){ return v<0?0:v>255?255:v; }
   function applyFilterToCanvas(canvas, filterKey){
     const ops = FILTERS[filterKey];
-    if (!ops || !ops.length) return;
-    const ctx = canvas.getContext("2d");
-    const w = canvas.width, h = canvas.height;
-    if (!w || !h) return;
-    const imgData = ctx.getImageData(0,0,w,h);
-    const d = imgData.data;
-    for (let i=0;i<d.length;i+=4){
-      let r=d[i], g=d[i+1], b=d[i+2];
-      for (const op of ops){
-        if (op.m){
-          const m = op.m;
-          const nr = r*m[0]+g*m[1]+b*m[2];
-          const ng = r*m[3]+g*m[4]+b*m[5];
-          const nb = r*m[6]+g*m[7]+b*m[8];
-          r=nr; g=ng; b=nb;
-        } else if (op.contrast!==undefined){
-          const c = op.contrast;
-          r=(r-128)*c+128; g=(g-128)*c+128; b=(b-128)*c+128;
-        } else if (op.brightness!==undefined){
-          const br = op.brightness;
-          r*=br; g*=br; b*=br;
+    if (ops && ops.length){
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+      if (w && h){
+        const imgData = ctx.getImageData(0,0,w,h);
+        const d = imgData.data;
+        for (let i=0;i<d.length;i+=4){
+          let r=d[i], g=d[i+1], b=d[i+2];
+          for (const op of ops){
+            if (op.m){
+              const m = op.m;
+              const nr = r*m[0]+g*m[1]+b*m[2];
+              const ng = r*m[3]+g*m[4]+b*m[5];
+              const nb = r*m[6]+g*m[7]+b*m[8];
+              r=nr; g=ng; b=nb;
+            } else if (op.contrast!==undefined){
+              const c = op.contrast;
+              r=(r-128)*c+128; g=(g-128)*c+128; b=(b-128)*c+128;
+            } else if (op.brightness!==undefined){
+              const br = op.brightness;
+              r*=br; g*=br; b*=br;
+            } else if (op.tint){
+              const [tr,tg,tb] = op.tint, a = op.amount;
+              r = r*(1-a)+tr*a; g = g*(1-a)+tg*a; b = b*(1-a)+tb*a;
+            }
+          }
+          d[i]=clamp255(r); d[i+1]=clamp255(g); d[i+2]=clamp255(b);
         }
+        ctx.putImageData(imgData,0,0);
       }
-      d[i]=clamp255(r); d[i+1]=clamp255(g); d[i+2]=clamp255(b);
     }
-    ctx.putImageData(imgData,0,0);
+    if (VIGNETTE_FILTERS[filterKey] !== undefined){
+      applyVignette(canvas, VIGNETTE_FILTERS[filterKey]);
+    }
   }
   const FRAME_LABELS = { flat:"Flat Strip", gallery:"Gallery Mat", polaroid:"Polaroid", confetti:"Confetti", botanical:"Botanical", minimal:"Minimal" };
-  const FILTER_LABELS = { none:"None", noir:"Noir", sepia:"Sepia", vivid:"Vivid", cool:"Cool", warm:"Warm" };
+  const FILTER_LABELS = { none:"None", noir:"Noir", sepia:"Sepia", vivid:"Vivid", cool:"Cool", warm:"Warm", vintage:"Vintage Booth" };
 
   let shots = [];
+  let shotGifFrames = []; // parallel array: shotGifFrames[i] = recorded frames for shots[i]'s moving version
   let captureStream;
   let composedBlob = null;
 
@@ -710,6 +739,77 @@
     $("set-color-accent").value = DEFAULT_COLORS.accent;
     applyColorSettings();
   });
+
+  /* ---------------- animated GIF export (moving photo strip) ---------------- */
+  const GIF_JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js";
+  const GIF_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js";
+  const GIF_FRAME_INTERVAL_MS = 140; // ~7fps — smooth enough for a quick clip, keeps file size sane
+  const GIF_MAX_EXPORT_WIDTH = 900;  // full 600dpi print size would be huge/slow to encode as a GIF
+
+  let gifWorkerBlobUrl = null;
+  let gifLibLoadPromise = null;
+
+  function loadScriptTag(src){
+    return new Promise((resolve,reject)=>{
+      const s = document.createElement("script");
+      s.src = src; s.onload = resolve; s.onerror = ()=>reject(new Error("script-load-failed"));
+      document.head.appendChild(s);
+    });
+  }
+
+  // Loading the worker script directly by CDN URL gets blocked by some
+  // browsers' cross-origin Worker restrictions. Fetching it and handing the
+  // library a same-origin blob URL instead sidesteps that reliably.
+  function ensureGifLib(){
+    if (!gifLibLoadPromise){
+      gifLibLoadPromise = (async ()=>{
+        if (!window.GIF) await loadScriptTag(GIF_JS_URL);
+        if (!gifWorkerBlobUrl){
+          const resp = await fetch(GIF_WORKER_URL);
+          const blob = await resp.blob();
+          gifWorkerBlobUrl = URL.createObjectURL(blob);
+        }
+      })();
+    }
+    return gifLibLoadPromise;
+  }
+
+  async function exportAnimatedGif(onProgress){
+    await ensureGifLib();
+    const { paper } = getLayoutMetrics(shots.length);
+    const scale = Math.min(1, GIF_MAX_EXPORT_WIDTH / paper.w);
+    const gifW = Math.max(1, Math.round(paper.w*scale));
+    const gifH = Math.max(1, Math.round(paper.h*scale));
+    const maxFrames = Math.max(1, ...shotGifFrames.map(f=> f ? f.length : 0));
+
+    const tmp = document.createElement("canvas");
+    tmp.width = gifW; tmp.height = gifH;
+    const ctx = tmp.getContext("2d");
+    setHQSmoothing(ctx);
+
+    return new Promise((resolve, reject)=>{
+      const gif = new GIF({ workers:2, quality:12, width:gifW, height:gifH, workerScript:gifWorkerBlobUrl });
+      for(let f=0; f<maxFrames; f++){
+        ctx.clearRect(0,0,gifW,gifH);
+        ctx.save();
+        ctx.scale(scale, scale);
+        // Each cell uses its own recorded frame at this moment in time; a
+        // cell with fewer frames (e.g. recording started slightly late)
+        // just holds its last frame instead of breaking the loop's sync.
+        const sourceCanvases = shots.map((stillCanvas, i)=>{
+          const frames = shotGifFrames[i];
+          if (frames && frames.length) return frames[Math.min(f, frames.length-1)];
+          return stillCanvas;
+        });
+        renderComposedFrame(ctx, sourceCanvases);
+        ctx.restore();
+        gif.addFrame(ctx, { copy:true, delay:GIF_FRAME_INTERVAL_MS });
+      }
+      gif.on("progress", p=>{ if (onProgress) onProgress(p); });
+      gif.on("finished", blob=> resolve(blob));
+      try{ gif.render(); }catch(e){ reject(e); }
+    });
+  }
 
   /* ---------------- idle background ---------------- */
   // The idle (start) screen no longer opens the camera at all — it just shows a
@@ -866,6 +966,7 @@
 
   async function startSession(){
     shots = [];
+    shotGifFrames = [];
     buildShotFrames(settings.count);
     show("screen-capture");
     updateCropGuide();
@@ -879,7 +980,7 @@
     await wait(400);
     for(let i=0;i<settings.count;i++){
       $("capture-caption").textContent = `Photo ${i+1} of ${settings.count}`;
-      await runCountdown(5);
+      await runCountdown(5, 3);
       await capturePhoto();
       markShotDone(i);
       await wait(500);
@@ -932,9 +1033,37 @@
     }
   });
 
-  async function runCountdown(n){
+  let activeGifRecorder = null;
+  let activeGifFrames = null;
+
+  function grabGifFrame(video){
+    const c = document.createElement("canvas");
+    // Downscaled — these are just the raw source frames for the animated
+    // GIF, not the crisp full-res still (kept separately), so there's no
+    // need for full camera resolution here.
+    const scale = Math.min(1, 480 / video.videoWidth);
+    c.width = Math.round(video.videoWidth*scale);
+    c.height = Math.round(video.videoHeight*scale);
+    const ctx = c.getContext("2d");
+    ctx.translate(c.width,0); ctx.scale(-1,1);
+    ctx.drawImage(video,0,0,c.width,c.height);
+    return c;
+  }
+
+  // Starts recording frames for the moving photo the moment the countdown
+  // reaches "3", so guests get roughly the final 3 seconds before the
+  // shutter — the same window they're already looking at the camera for.
+  async function runCountdown(n, recordFromCount){
     const el = $("countdown-el");
-    for(let i=n;i>0;i--){ el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)"; await wait(730); }
+    const video = $("capture-video");
+    for(let i=n;i>0;i--){
+      el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)";
+      if (recordFromCount && i === recordFromCount && !activeGifRecorder){
+        activeGifFrames = [];
+        activeGifRecorder = setInterval(()=> activeGifFrames.push(grabGifFrame(video)), GIF_FRAME_INTERVAL_MS);
+      }
+      await wait(730);
+    }
     el.textContent = "";
   }
 
@@ -945,7 +1074,15 @@
     const ctx = c.getContext("2d");
     ctx.translate(c.width,0); ctx.scale(-1,1);
     ctx.drawImage(video,0,0,c.width,c.height);
+
+    if (activeGifRecorder){ clearInterval(activeGifRecorder); activeGifRecorder = null; }
+    const recordedFrames = activeGifFrames || [];
+    activeGifFrames = null;
+
+    const idx = (typeof replaceIndex === "number") ? replaceIndex : shots.length;
     if (typeof replaceIndex === "number") shots[replaceIndex] = c; else shots.push(c);
+    shotGifFrames[idx] = recordedFrames;
+
     $("flash-el").classList.remove("go"); void $("flash-el").offsetWidth; $("flash-el").classList.add("go");
     beep();
   }
@@ -974,7 +1111,7 @@
     }catch(e){ alert("Couldn't access the camera."); show("screen-retake-review"); return; }
     await wait(400);
     $("capture-caption").textContent = `Retaking photo ${index+1}`;
-    await runCountdown(5);
+    await runCountdown(5, 3);
     await capturePhoto(index);
     markShotDone(index);
     await wait(400);
@@ -1036,18 +1173,13 @@
     ctx.drawImage(off, x, y, w, h);
   }
 
-  function composePrint(targetCanvasId, isPreview){
-    const { paper, isFlat, marginX, marginTop, marginBottom, cols, gap, cellW, cellH } = getLayoutMetrics(shots.length);
-    const canvas = $(targetCanvasId || "review-canvas");
-    canvas.width = paper.w; canvas.height = paper.h;
-    const ctx = canvas.getContext("2d");
-    setHQSmoothing(ctx);
-
+  function renderComposedFrame(ctx, sourceCanvases){
+    const { paper, isFlat, marginX, marginTop, marginBottom, cols, gap, cellW, cellH } = getLayoutMetrics(sourceCanvases.length);
     drawFrame(ctx, paper.w, paper.h, settings.frame);
 
     const innerX = marginX, innerY = marginTop;
 
-    shots.forEach((shotCanvas, i)=>{
+    sourceCanvases.forEach((shotCanvas, i)=>{
       const col = i % cols, row = Math.floor(i/cols);
       let x = innerX + col*(cellW+gap);
       let y = innerY + row*(cellH+gap);
@@ -1080,6 +1212,16 @@
     }
     // When frame is "flat" we deliberately draw no text — the uploaded
     // background photo is expected to already have the event name on it.
+  }
+
+  function composePrint(targetCanvasId, isPreview){
+    const { paper } = getLayoutMetrics(shots.length);
+    const canvas = $(targetCanvasId || "review-canvas");
+    canvas.width = paper.w; canvas.height = paper.h;
+    const ctx = canvas.getContext("2d");
+    setHQSmoothing(ctx);
+
+    renderComposedFrame(ctx, shots);
 
     // Preview renders (the live filter-picker thumbnail) don't need a
     // downloadable/uploadable blob, so skip that work for those calls.
@@ -1206,9 +1348,11 @@
     });
   }
 
-  async function uploadToDrive(blob){
+  async function uploadToDrive(blob, mimeType, ext){
+    mimeType = mimeType || "image/jpeg";
+    ext = ext || "jpg";
     const token = await getAccessToken();
-    const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+".jpg", mimeType:"image/jpeg" };
+    const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+"."+ext, mimeType:mimeType };
     if (settings.folderId) metadata.parents = [settings.folderId];
     const form = new FormData();
     form.append("metadata", new Blob([JSON.stringify(metadata)], {type:"application/json"}));
@@ -1241,10 +1385,24 @@
       return;
     }
     if (!composedBlob){ statusEl.textContent = "No photo ready yet."; return; }
-    statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
     $("upload-btn").disabled = true;
+
+    let gifBlob = null;
     try{
-      const link = await uploadToDrive(composedBlob);
+      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Rendering moving photo...</span>';
+      gifBlob = await exportAnimatedGif(p=>{
+        statusEl.innerHTML = `<span class="upload-spinner"></span><span>Rendering moving photo... ${Math.round(p*100)}%</span>`;
+      });
+    }catch(e){
+      console.warn("GIF export failed, falling back to still photo:", e);
+      gifBlob = null;
+    }
+
+    try{
+      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
+      const link = gifBlob
+        ? await uploadToDrive(gifBlob, "image/gif", "gif")
+        : await uploadToDrive(composedBlob, "image/jpeg", "jpg");
       statusEl.innerHTML = "";
       renderQR(link);
       show("screen-qr");
