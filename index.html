@@ -1360,26 +1360,45 @@
     });
   }
 
-  async function uploadToDrive(blob, mimeType, ext){
+  function uploadToDrive(blob, mimeType, ext, onProgress){
     mimeType = mimeType || "image/jpeg";
     ext = ext || "jpg";
-    const token = await getAccessToken();
-    const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+"."+ext, mimeType:mimeType };
-    if (settings.folderId) metadata.parents = [settings.folderId];
-    const form = new FormData();
-    form.append("metadata", new Blob([JSON.stringify(metadata)], {type:"application/json"}));
-    form.append("file", blob);
-    const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
-      method:"POST", headers:{ Authorization:"Bearer "+token }, body:form
+    return getAccessToken().then(token=>{
+      const metadata = { name:(settings.eventName||"photo")+"-"+Date.now()+"."+ext, mimeType:mimeType };
+      if (settings.folderId) metadata.parents = [settings.folderId];
+      const form = new FormData();
+      form.append("metadata", new Blob([JSON.stringify(metadata)], {type:"application/json"}));
+      form.append("file", blob);
+
+      // fetch() has no way to report upload progress, so the actual
+      // network transfer uses XMLHttpRequest instead, purely for the
+      // upload.onprogress event.
+      return new Promise((resolve, reject)=>{
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink");
+        xhr.setRequestHeader("Authorization", "Bearer "+token);
+        xhr.upload.onprogress = (e)=>{
+          if (onProgress && e.lengthComputable) onProgress(e.loaded/e.total);
+        };
+        xhr.onload = ()=>{
+          if (xhr.status >= 200 && xhr.status < 300){
+            let data;
+            try{ data = JSON.parse(xhr.responseText); }
+            catch(e){ reject(e); return; }
+            const link = data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`;
+            fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
+              method:"POST",
+              headers:{ Authorization:"Bearer "+token, "Content-Type":"application/json" },
+              body: JSON.stringify({ role:"reader", type:"anyone" })
+            }).catch(()=>{}).finally(()=> resolve(link));
+          } else {
+            reject(new Error("Upload failed ("+xhr.status+")"));
+          }
+        };
+        xhr.onerror = ()=> reject(new Error("Upload failed (network error)"));
+        xhr.send(form);
+      });
     });
-    if (!res.ok) throw new Error("Upload failed ("+res.status+")");
-    const data = await res.json();
-    await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
-      method:"POST",
-      headers:{ Authorization:"Bearer "+token, "Content-Type":"application/json" },
-      body: JSON.stringify({ role:"reader", type:"anyone" })
-    }).catch(()=>{});
-    return data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`;
   }
 
   function renderQR(link){
@@ -1413,10 +1432,13 @@
     }
 
     try{
-      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
+      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading... 0%</span>';
+      const onUploadProgress = (frac)=>{
+        statusEl.innerHTML = `<span class="upload-spinner"></span><span>Uploading... ${Math.round(frac*100)}%</span>`;
+      };
       const link = gifBlob
-        ? await uploadToDrive(gifBlob, "image/gif", "gif")
-        : await uploadToDrive(composedBlob, "image/jpeg", "jpg");
+        ? await uploadToDrive(gifBlob, "image/gif", "gif", onUploadProgress)
+        : await uploadToDrive(composedBlob, "image/jpeg", "jpg", onUploadProgress);
       statusEl.innerHTML = "";
       renderQR(link);
       show("screen-qr");
