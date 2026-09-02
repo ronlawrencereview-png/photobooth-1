@@ -466,6 +466,16 @@
   <hr class="divider">
 
   <div class="toggle-row">
+    <span>Upload as moving GIF (instead of a still photo)</span>
+    <label class="switch"><input type="checkbox" id="set-uploadgif" checked><span class="slider-tog"></span></label>
+  </div>
+  <div class="help-box" style="margin-bottom:18px;">
+    Turn this off if uploads are too slow on your venue's WiFi — guests will get the regular still photo instead, which uploads instantly.
+  </div>
+
+  <hr class="divider">
+
+  <div class="toggle-row">
     <span>Auto-upload to Google Drive</span>
     <label class="switch"><input type="checkbox" id="set-autoupload"><span class="slider-tog"></span></label>
   </div>
@@ -495,7 +505,7 @@
     eventName:"Say Cheese",
     tagline:"Strike a pose — your photos will be ready to scan and keep in seconds.",
     count:4, paper:"2x6", filter:"warm", frame:"flat",
-    autoUpload:false, clientId:"", folderId:"",
+    autoUpload:false, uploadGif:true, clientId:"", folderId:"",
     backgroundImage:null, backgroundImageURL:null,
     appBackgroundImage:null, appBackgroundImageURL:null
   };
@@ -636,6 +646,7 @@
     settings.tagline = $("set-tagline").value.trim();
     settings.paper = $("set-paper").value;
     settings.autoUpload = $("set-autoupload").checked;
+    settings.uploadGif = $("set-uploadgif").checked;
     settings.clientId = $("set-clientid").value.trim();
     settings.folderId = $("set-folderid").value.trim();
     $("event-title-display").textContent = settings.eventName;
@@ -743,9 +754,9 @@
   /* ---------------- animated GIF export (moving photo strip) ---------------- */
   const GIF_JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js";
   const GIF_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js";
-  const GIF_FRAME_INTERVAL_MS = 220; // ~4.5fps — still reads as smooth motion, roughly halves the frame count to encode
-  const GIF_MAX_EXPORT_WIDTH = 560;  // smaller export canvas = much faster per-frame filtering/encoding
-  const GIF_MAX_FRAMES = 14;         // hard cap so total render time stays bounded regardless of shot count/timing
+  const GIF_FRAME_INTERVAL_MS = 300; // ~3.3fps — a quick, punchy loop rather than smooth video; much less to encode
+  const GIF_MAX_EXPORT_WIDTH = 380;  // small export canvas — the biggest single factor in render+upload speed
+  const GIF_MAX_FRAMES = 8;          // hard cap so total render time stays short and predictable
 
   let gifWorkerBlobUrl = null;
   let gifLibLoadPromise = null;
@@ -789,7 +800,7 @@
     setHQSmoothing(ctx);
 
     return new Promise((resolve, reject)=>{
-      const gif = new GIF({ workers:4, quality:20, width:gifW, height:gifH, workerScript:gifWorkerBlobUrl });
+      const gif = new GIF({ workers:4, quality:28, width:gifW, height:gifH, workerScript:gifWorkerBlobUrl });
       for(let f=0; f<maxFrames; f++){
         ctx.clearRect(0,0,gifW,gifH);
         ctx.save();
@@ -1042,7 +1053,7 @@
     // Downscaled — these are just the raw source frames for the animated
     // GIF, not the crisp full-res still (kept separately), so there's no
     // need for full camera resolution here.
-    const scale = Math.min(1, 360 / video.videoWidth);
+    const scale = Math.min(1, 280 / video.videoWidth);
     c.width = Math.round(video.videoWidth*scale);
     c.height = Math.round(video.videoHeight*scale);
     const ctx = c.getContext("2d");
@@ -1389,14 +1400,16 @@
     $("upload-btn").disabled = true;
 
     let gifBlob = null;
-    try{
-      statusEl.innerHTML = '<span class="upload-spinner"></span><span>Rendering moving photo...</span>';
-      gifBlob = await exportAnimatedGif(p=>{
-        statusEl.innerHTML = `<span class="upload-spinner"></span><span>Rendering moving photo... ${Math.round(p*100)}%</span>`;
-      });
-    }catch(e){
-      console.warn("GIF export failed, falling back to still photo:", e);
-      gifBlob = null;
+    if (settings.uploadGif){
+      try{
+        statusEl.innerHTML = '<span class="upload-spinner"></span><span>Rendering moving photo...</span>';
+        gifBlob = await exportAnimatedGif(p=>{
+          statusEl.innerHTML = `<span class="upload-spinner"></span><span>Rendering moving photo... ${Math.round(p*100)}%</span>`;
+        });
+      }catch(e){
+        console.warn("GIF export failed, falling back to still photo:", e);
+        gifBlob = null;
+      }
     }
 
     try{
