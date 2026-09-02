@@ -12,19 +12,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500;1,9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#17140f;
-    --bg-2:#1f1a13;
-    --panel:#221d15;
-    --paper:#f4ecdd;
-    --ink:#2a2318;
-    --text:#f4ecdd;
-    --text-dim:#b3a894;
-    --accent:#c98a3e;
-    --accent-soft:#e0ab68;
-    --sage:#7c8b6c;
-    --brick:#8e4b46;
-    --line: rgba(244,236,221,0.14);
-    --shadow: 0 18px 40px rgba(0,0,0,0.45);
+    --bg:#eef4ea;
+    --bg-2:#dfe9d9;
+    --panel:#ffffff;
+    --paper:#fffdf6;
+    --ink:#2c3e50;
+    --text:#2c3e50;
+    --text-dim:#6b7d8a;
+    --accent:#ffc966;
+    --accent-soft:#ffd98c;
+    --sage:#bcdbc0;
+    --brick:#2c3e50;
+    --line: rgba(44,62,80,0.14);
+    --shadow: 0 14px 34px rgba(44,62,80,0.16);
     --radius: 4px;
     font-family: Inter, system-ui, -apple-system, sans-serif;
   }
@@ -63,7 +63,7 @@
   }
   #idle-veil{
     position:absolute; inset:0;
-    background:linear-gradient(180deg, rgba(23,20,15,.55) 0%, rgba(23,20,15,.72) 55%, rgba(23,20,15,.88) 100%);
+    background:linear-gradient(180deg, rgba(238,244,234,.35) 0%, rgba(238,244,234,.62) 55%, rgba(238,244,234,.85) 100%);
   }
   .idle-content{ position:relative; z-index:3; text-align:center; padding:0 40px; }
   .brand-eyebrow{ font-size:13px; letter-spacing:.14em; color:var(--accent-soft); margin-bottom:10px; font-weight:500; }
@@ -76,7 +76,7 @@
     margin-top:44px; width:132px; height:132px; border-radius:50%;
     background:radial-gradient(circle at 35% 30%, var(--accent-soft), var(--accent) 70%);
     border:6px solid rgba(244,236,221,.85); box-shadow:0 0 0 2px rgba(0,0,0,.3), var(--shadow);
-    color:#1c1408; font-family:Inter; font-weight:700; font-size:15px; letter-spacing:.06em;
+    color:#2c3e50; font-family:Inter; font-weight:700; font-size:15px; letter-spacing:.06em;
     cursor:pointer; animation:pulse 2.6s ease-in-out infinite;
   }
   .shutter-btn.small{ width:auto; height:auto; border-radius:30px; padding:16px 40px; animation:none; margin-top:30px; }
@@ -85,12 +85,21 @@
 
   .gear{
     position:absolute; top:18px; right:18px; z-index:5; width:40px; height:40px;
-    border-radius:50%; background:rgba(0,0,0,.25); border:1px solid var(--line);
-    display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:.5;
+    border-radius:50%; background:rgba(44,62,80,.06); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:.65;
     transition:opacity .2s;
   }
   .gear:hover{ opacity:1; }
   .gear svg{ width:18px; height:18px; stroke:var(--text); }
+
+  .back-btn{
+    position:absolute; top:18px; left:18px; z-index:5; width:40px; height:40px;
+    border-radius:50%; background:rgba(44,62,80,.06); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; opacity:.65;
+    transition:opacity .2s;
+  }
+  .back-btn:hover{ opacity:1; }
+  .back-btn svg{ width:20px; height:20px; stroke:var(--text); }
 
   /* ---------- SETTINGS DRAWER ---------- */
   #drawer-backdrop{
@@ -103,26 +112,27 @@
     background:var(--panel); border-left:1px solid var(--line);
     transform:translateX(100%); transition:transform .35s ease;
     display:flex; flex-direction:column; padding:26px 24px; overflow-y:auto;
+    text-align:center;
   }
   #drawer.open{ transform:translateX(0); }
   #drawer h2{ font-family:Fraunces, serif; font-weight:600; font-size:24px; margin:0 0 4px; }
   #drawer .drawer-note{ color:var(--text-dim); font-size:12.5px; margin-bottom:22px; }
   .field{ margin-bottom:18px; }
-  .field label{ display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:6px; letter-spacing:.02em; }
+  .field label{ display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:6px; letter-spacing:.02em; text-align:center; }
   .field select, .field input[type=text]{
     width:100%; padding:10px 12px; background:var(--bg-2); border:1px solid var(--line);
-    border-radius:var(--radius); color:var(--text); font-size:14px; font-family:Inter;
+    border-radius:var(--radius); color:var(--text); font-size:14px; font-family:Inter; text-align:center;
   }
   .field-row{ display:flex; gap:12px; }
   .field-row .field{ flex:1; }
-  .toggle-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-top:1px solid var(--line); }
+  .toggle-row{ display:flex; align-items:center; justify-content:center; gap:14px; padding:10px 0; border-top:1px solid var(--line); }
   .toggle-row span{ font-size:14px; }
   .switch{ position:relative; width:42px; height:24px; }
   .switch input{ opacity:0; width:0; height:0; }
   .slider-tog{ position:absolute; inset:0; background:var(--bg-2); border:1px solid var(--line); border-radius:24px; cursor:pointer; transition:.2s; }
   .slider-tog:before{ content:""; position:absolute; width:16px; height:16px; left:3px; top:3px; background:var(--text-dim); border-radius:50%; transition:.2s; }
   input:checked + .slider-tog{ background:var(--accent); }
-  input:checked + .slider-tog:before{ transform:translateX(18px); background:#1c1408; }
+  input:checked + .slider-tog:before{ transform:translateX(18px); background:#2c3e50; }
   .divider{ border:none; border-top:1px solid var(--line); margin:20px 0; }
   .help-box{ font-size:12px; color:var(--text-dim); line-height:1.55; background:var(--bg-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
   .drawer-close{ margin-top:auto; padding-top:18px; text-align:center; font-size:13px; color:var(--text-dim); cursor:pointer; }
@@ -133,15 +143,15 @@
   .customize-wrap{ max-width:680px; width:100%; padding:36px 30px 60px; text-align:center; }
   .customize-wrap h2{ font-family:Fraunces, serif; font-style:italic; font-weight:600; font-size:34px; margin:0 0 6px; }
   .customize-wrap .customize-sub{ color:var(--text-dim); font-size:14px; margin-bottom:30px; }
-  .picker-group{ margin-bottom:30px; text-align:left; }
+  .picker-group{ margin-bottom:30px; text-align:center; }
   .picker-group > label{ display:block; font-size:13px; letter-spacing:.03em; color:var(--text-dim); margin-bottom:12px; }
-  .pill-row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .pill-row{ display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
   .pill{
     padding:13px 22px; border-radius:30px; border:1.5px solid var(--line); background:var(--panel);
     color:var(--text); font-family:Inter; font-weight:600; font-size:15px; cursor:pointer; transition:.15s;
   }
   .pill:hover{ border-color:var(--accent-soft); }
-  .pill.active{ background:var(--accent); border-color:var(--accent); color:#1c1408; }
+  .pill.active{ background:var(--accent); border-color:var(--accent); color:#2c3e50; }
   .filter-row{ display:flex; gap:12px; flex-wrap:wrap; }
   .filter-swatch{
     background:none; border:2px solid transparent; border-radius:8px; padding:5px; cursor:pointer;
@@ -151,6 +161,9 @@
   .filter-swatch span{ font-size:11.5px; color:var(--text-dim); }
   .filter-swatch.active{ border-color:var(--accent); }
   .filter-swatch.active span{ color:var(--accent-soft); }
+
+  .filter-preview-wrap{ display:flex; justify-content:center; margin-bottom:26px; }
+  #filter-preview-canvas{ max-width:min(60vw, 280px); max-height:46vh; width:auto; height:auto; border-radius:2px; box-shadow:var(--shadow); }
 
   /* ---------- CAPTURE ---------- */
   #screen-capture{ background:#000; }
@@ -194,21 +207,21 @@
   .text-link{ margin-top:20px; font-size:13px; color:var(--text-dim); text-decoration:underline; cursor:pointer; }
 
   /* ---------- REVIEW ---------- */
-  #screen-review{ background:var(--bg); flex-direction:row; gap:48px; padding:30px; }
+  #screen-review{ background:var(--bg); flex-direction:row; gap:48px; padding:30px; justify-content:center; }
   .review-print-wrap{ display:flex; align-items:center; justify-content:center; flex:1.1; height:100%; }
   #review-canvas-holder{ background:transparent; padding:0; border-radius:2px; }
   #review-canvas-holder canvas{ display:block; max-height:78vh; max-width:36vw; border:none; box-shadow:var(--shadow); }
-  .review-actions{ display:flex; flex-direction:column; gap:14px; width:280px; }
+  .review-actions{ display:flex; flex-direction:column; align-items:center; gap:14px; width:280px; text-align:center; }
   .review-actions h3{ font-family:Fraunces, serif; font-weight:600; font-size:26px; margin:0 0 4px; font-style:italic; }
   .review-actions p.sub{ color:var(--text-dim); font-size:13px; margin:0 0 10px; }
   .btn{
     padding:15px 18px; border-radius:var(--radius); border:1px solid var(--line);
     background:var(--panel); color:var(--text); font-family:Inter; font-weight:600; font-size:14.5px;
-    cursor:pointer; text-align:left; display:flex; align-items:center; justify-content:space-between;
-    transition:background .2s, border-color .2s;
+    cursor:pointer; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    transition:background .2s, border-color .2s; width:100%;
   }
   .btn:hover{ border-color:var(--accent-soft); }
-  .btn.primary{ background:var(--accent); color:#1c1408; border-color:var(--accent); }
+  .btn.primary{ background:var(--accent); color:#2c3e50; border-color:var(--accent); }
   .btn.primary:hover{ background:var(--accent-soft); }
   .btn:disabled{ opacity:.4; cursor:not-allowed; }
   .btn small{ font-weight:400; opacity:.75; display:block; font-size:11.5px; margin-top:2px; }
@@ -266,6 +279,9 @@
 
   <!-- SETUP (guest picks how many photos) -->
   <section class="screen" id="screen-customize">
+    <div class="back-btn" id="customize-back-btn" title="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    </div>
     <div class="customize-wrap">
       <h2>Set up your photos</h2>
       <p class="customize-sub">Pick how many shots you want.</p>
@@ -304,9 +320,16 @@
 
   <!-- FILTER (guest picks a filter, after they're happy with the shots) -->
   <section class="screen" id="screen-filter">
+    <div class="back-btn" id="filter-back-btn" title="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    </div>
     <div class="customize-wrap">
       <h2>Pick a filter</h2>
       <p class="customize-sub">Choose how your photos will look on the print.</p>
+
+      <div class="filter-preview-wrap">
+        <canvas id="filter-preview-canvas"></canvas>
+      </div>
 
       <div class="picker-group">
         <div class="filter-row" id="filter-picker"></div>
@@ -399,11 +422,11 @@
 
   <div class="field" style="margin-top:14px;">
     <label>Google OAuth Client ID</label>
-    <input type="text" id="set-clientid" placeholder="xxxxxxxx.apps.googleusercontent.com">
+    <input type="text" id="set-clientid" value="101328790624-a6knc6hmb69c0dsir2h02spbg3et6teb.apps.googleusercontent.com" placeholder="xxxxxxxx.apps.googleusercontent.com">
   </div>
   <div class="field">
     <label>Drive folder ID (optional)</label>
-    <input type="text" id="set-folderid" placeholder="Leave blank to save to My Drive root">
+    <input type="text" id="set-folderid" value="1XNQvtiIJNGbCwJMuby3c4pQrNn2so4Tr" placeholder="Leave blank to save to My Drive root">
   </div>
   <div class="help-box">
     Uploading needs a Google Cloud OAuth Client ID with the Drive API enabled, and this page hosted on a real https:// address (this won't work inside the Claude preview — download the file and host it, e.g. on GitHub Pages, then add that address as an Authorized JavaScript origin in Google Cloud Console).
@@ -660,9 +683,10 @@
       applyFilterToCanvas(c, key);
       const label = document.createElement("span"); label.textContent = FILTER_LABELS[key];
       btn.appendChild(c); btn.appendChild(label);
-      btn.onclick = ()=>{ settings.filter = key; buildFilterPicker(); };
+      btn.onclick = ()=>{ settings.filter = key; buildFilterPicker(); renderFilterPreview(); };
       wrap.appendChild(btn);
     });
+    renderFilterPreview();
   }
 
   $("start-btn").onclick = ()=>{
@@ -799,6 +823,8 @@
   $("rr-continue-btn").onclick = ()=>{ buildFilterPicker(); show("screen-filter"); };
   $("filter-continue-btn").onclick = ()=>{ composePrint(); show("screen-review"); };
   $("rr-startover-link").onclick = ()=> show("screen-idle");
+  $("customize-back-btn").onclick = ()=> show("screen-idle");
+  $("filter-back-btn").onclick = ()=>{ renderRetakeReview(); show("screen-retake-review"); };
 
   /* ---------------- compose print layout ---------------- */
   function gridFor(count, w, h){
@@ -847,9 +873,9 @@
     ctx.drawImage(off, x, y, w, h);
   }
 
-  function composePrint(){
+  function composePrint(targetCanvasId, isPreview){
     const { paper, isFlat, marginX, marginTop, marginBottom, cols, gap, cellW, cellH } = getLayoutMetrics(shots.length);
-    const canvas = $("review-canvas");
+    const canvas = $(targetCanvasId || "review-canvas");
     canvas.width = paper.w; canvas.height = paper.h;
     const ctx = canvas.getContext("2d");
     setHQSmoothing(ctx);
@@ -892,7 +918,16 @@
     // When frame is "flat" we deliberately draw no text — the uploaded
     // background photo is expected to already have the event name on it.
 
-    canvas.toBlob(b=>{ composedBlob = b; }, "image/jpeg", 0.98);
+    // Preview renders (the live filter-picker thumbnail) don't need a
+    // downloadable/uploadable blob, so skip that work for those calls.
+    if (!isPreview){
+      canvas.toBlob(b=>{ composedBlob = b; }, "image/jpeg", 0.98);
+    }
+  }
+
+  function renderFilterPreview(){
+    if (!shots.length) return;
+    composePrint("filter-preview-canvas", true);
   }
 
   function drawCover(ctx, srcCanvas, x, y, w, h){
@@ -942,17 +977,70 @@
     });
   }
 
+  const TOKEN_KEY = "sb_drive_token";
+  const SIGNED_IN_BEFORE_KEY = "sb_drive_signed_in_before";
+
+  function getCachedToken(){
+    try{
+      const raw = localStorage.getItem(TOKEN_KEY);
+      if (!raw) return null;
+      const { token, expiresAt } = JSON.parse(raw);
+      // Leave a 2-minute safety buffer before real expiry
+      if (token && expiresAt && Date.now() < expiresAt - 120000) return token;
+      return null;
+    }catch(e){ return null; }
+  }
+
+  function cacheToken(token, expiresInSeconds){
+    try{
+      localStorage.setItem(TOKEN_KEY, JSON.stringify({
+        token, expiresAt: Date.now() + (expiresInSeconds*1000)
+      }));
+    }catch(e){ /* storage unavailable, ignore */ }
+  }
+
   function getAccessToken(){
+    const cached = getCachedToken();
+    if (cached) return Promise.resolve(cached);
+
     return ensureGIS().then(()=>new Promise((resolve,reject)=>{
       try{
+        const signedInBefore = localStorage.getItem(SIGNED_IN_BEFORE_KEY) === "1";
         const tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: settings.clientId,
           scope: "https://www.googleapis.com/auth/drive.file",
-          callback: (resp)=> resp.error ? reject(resp) : resolve(resp.access_token)
+          callback: (resp)=>{
+            if (resp.error) return reject(resp);
+            localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
+            cacheToken(resp.access_token, resp.expires_in || 3500);
+            resolve(resp.access_token);
+          }
+        });
+        // Try a silent (no-popup) refresh first if we've signed in before on this device.
+        if (signedInBefore){
+          tokenClient.requestAccessToken({ prompt: "none" });
+        } else {
+          tokenClient.requestAccessToken();
+        }
+      }catch(e){ reject(e); }
+    })).catch((err)=>{
+      // Silent refresh can fail (session too old, cookies cleared, etc).
+      // Fall back to one visible sign-in, which then gets cached again.
+      if (err && err.type === "popup_failed_to_open") return Promise.reject(err);
+      return ensureGIS().then(()=>new Promise((resolve,reject)=>{
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: settings.clientId,
+          scope: "https://www.googleapis.com/auth/drive.file",
+          callback: (resp)=>{
+            if (resp.error) return reject(resp);
+            localStorage.setItem(SIGNED_IN_BEFORE_KEY, "1");
+            cacheToken(resp.access_token, resp.expires_in || 3500);
+            resolve(resp.access_token);
+          }
         });
         tokenClient.requestAccessToken();
-      }catch(e){ reject(e); }
-    }));
+      }));
+    });
   }
 
   async function uploadToDrive(blob){
