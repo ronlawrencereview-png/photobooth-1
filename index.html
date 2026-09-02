@@ -968,12 +968,16 @@
     for(let i=0;i<settings.count;i++){
       $("capture-caption").textContent = `Photo ${i+1} of ${settings.count}`;
       // Only the first photo's countdown also records the 3-second video clip.
-      const onTick = (i===0 && settings.uploadGif) ? (count)=>{
-        if (count === 3 && !sessionVideoPromise){
-          sessionVideoPromise = recordSessionVideo(captureStream);
-        }
-      } : null;
-      await runCountdown(5, onTick);
+      // This fires on its own independent timer (not inside the countdown's
+      // own await chain), so nothing about starting the recorder can ever
+      // stall or freeze the on-screen countdown itself.
+      if (i===0 && settings.uploadGif){
+        const msUntilThree = 2*(120+730); // countdown starts at 5, "3" appears after 2 ticks
+        setTimeout(()=>{
+          if (!sessionVideoPromise) sessionVideoPromise = recordSessionVideo(captureStream);
+        }, msUntilThree);
+      }
+      await runCountdown(5);
       await capturePhoto();
       markShotDone(i);
       await wait(500);
@@ -1029,13 +1033,10 @@
   // Starts the plain camera countdown. If onTick is provided, it's called
   // with the current on-screen number each tick (used to kick off the
   // 3-second video recording exactly when the count shows "3").
-  async function runCountdown(n, onTick){
+  async function runCountdown(n){
     const el = $("countdown-el");
     for(let i=n;i>0;i--){
       el.textContent = i; el.style.transform="scale(1.15)"; await wait(120); el.style.transform="scale(1)";
-      // Never let starting the background video recording break the countdown
-      // itself — if anything here throws, log it and keep the timer running.
-      if (onTick){ try{ onTick(i); }catch(e){ console.warn("countdown onTick error:", e); } }
       await wait(730);
     }
     el.textContent = "";
