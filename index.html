@@ -76,7 +76,7 @@
     margin-top:44px; width:132px; height:132px; border-radius:50%;
     background:radial-gradient(circle at 35% 30%, var(--accent-soft), var(--accent) 70%);
     border:6px solid rgba(244,236,221,.85); box-shadow:0 0 0 2px rgba(0,0,0,.3), var(--shadow);
-    color:#2c3e50; font-family:Inter; font-weight:700; font-size:15px; letter-spacing:.06em;
+    color:var(--ink); font-family:Inter; font-weight:700; font-size:15px; letter-spacing:.06em;
     cursor:pointer; animation:pulse 2.6s ease-in-out infinite;
   }
   .shutter-btn.small{ width:auto; height:auto; border-radius:30px; padding:16px 40px; animation:none; margin-top:30px; }
@@ -132,8 +132,17 @@
   .slider-tog{ position:absolute; inset:0; background:var(--bg-2); border:1px solid var(--line); border-radius:24px; cursor:pointer; transition:.2s; }
   .slider-tog:before{ content:""; position:absolute; width:16px; height:16px; left:3px; top:3px; background:var(--text-dim); border-radius:50%; transition:.2s; }
   input:checked + .slider-tog{ background:var(--accent); }
-  input:checked + .slider-tog:before{ transform:translateX(18px); background:#2c3e50; }
+  input:checked + .slider-tog:before{ transform:translateX(18px); background:var(--ink); }
   .divider{ border:none; border-top:1px solid var(--line); margin:20px 0; }
+  .color-row{ display:flex; justify-content:center; gap:18px; }
+  .color-swatch-field{ display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .color-swatch-field input[type=color]{
+    width:54px; height:54px; border-radius:50%; border:2px solid var(--line);
+    padding:0; cursor:pointer; background:none;
+  }
+  .color-swatch-field input[type=color]::-webkit-color-swatch-wrapper{ padding:0; border-radius:50%; }
+  .color-swatch-field input[type=color]::-webkit-color-swatch{ border:none; border-radius:50%; }
+  .color-swatch-field span{ font-size:11px; color:var(--text-dim); }
   .help-box{ font-size:12px; color:var(--text-dim); line-height:1.55; background:var(--bg-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
   .drawer-close{ margin-top:auto; padding-top:18px; text-align:center; font-size:13px; color:var(--text-dim); cursor:pointer; }
 
@@ -151,7 +160,7 @@
     color:var(--text); font-family:Inter; font-weight:600; font-size:15px; cursor:pointer; transition:.15s;
   }
   .pill:hover{ border-color:var(--accent-soft); }
-  .pill.active{ background:var(--accent); border-color:var(--accent); color:#2c3e50; }
+  .pill.active{ background:var(--accent); border-color:var(--accent); color:var(--ink); }
   .filter-row{ display:flex; gap:12px; flex-wrap:wrap; }
   .filter-swatch{
     background:none; border:2px solid transparent; border-radius:8px; padding:5px; cursor:pointer;
@@ -221,7 +230,7 @@
     transition:background .2s, border-color .2s; width:100%;
   }
   .btn:hover{ border-color:var(--accent-soft); }
-  .btn.primary{ background:var(--accent); color:#2c3e50; border-color:var(--accent); }
+  .btn.primary{ background:var(--accent); color:var(--ink); border-color:var(--accent); }
   .btn.primary:hover{ background:var(--accent-soft); }
   .btn:disabled{ opacity:.4; cursor:not-allowed; }
   .btn small{ font-weight:400; opacity:.75; display:block; font-size:11.5px; margin-top:2px; }
@@ -415,6 +424,27 @@
 
   <hr class="divider">
 
+  <div class="field">
+    <label>App colors (background, text, accent)</label>
+    <div class="color-row">
+      <div class="color-swatch-field">
+        <input type="color" id="set-color-bg" value="#eef4ea">
+        <span>Background</span>
+      </div>
+      <div class="color-swatch-field">
+        <input type="color" id="set-color-text" value="#2c3e50">
+        <span>Text</span>
+      </div>
+      <div class="color-swatch-field">
+        <input type="color" id="set-color-accent" value="#ffc966">
+        <span>Accent</span>
+      </div>
+    </div>
+    <div class="text-link" id="color-reset-link" style="margin-top:10px; font-size:12px;">Reset to default colors</div>
+  </div>
+
+  <hr class="divider">
+
   <div class="toggle-row">
     <span>Auto-upload to Google Drive</span>
     <label class="switch"><input type="checkbox" id="set-autoupload"><span class="slider-tog"></span></label>
@@ -585,6 +615,56 @@
     $("set-bgimage").value = "";
     $("bg-preview-wrap").style.display = "none";
     applyIdleBackground();
+  });
+
+  /* ---------------- live color customization ---------------- */
+  function hexToRgb(hex){
+    const h = hex.replace("#","");
+    return [ parseInt(h.substring(0,2),16), parseInt(h.substring(2,4),16), parseInt(h.substring(4,6),16) ];
+  }
+  function mixHex(hexA, hexB, weightOfB){
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const mixed = a.map((v,i)=> Math.round(v + (b[i]-v)*weightOfB));
+    return "#" + mixed.map(v=>v.toString(16).padStart(2,"0")).join("");
+  }
+  function hexToRgba(hex, alpha){
+    const [r,g,b] = hexToRgb(hex);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  const DEFAULT_COLORS = { bg:"#eef4ea", text:"#2c3e50", accent:"#ffc966" };
+
+  function applyColorSettings(){
+    const bg = $("set-color-bg").value;
+    const text = $("set-color-text").value;
+    const accent = $("set-color-accent").value;
+
+    const bg2 = mixHex(bg, text, 0.08);
+    const panel = mixHex(bg, "#ffffff", 0.85);
+    const textDim = mixHex(text, "#ffffff", 0.5);
+    const accentSoft = mixHex(accent, "#ffffff", 0.32);
+
+    const root = document.documentElement.style;
+    root.setProperty("--bg", bg);
+    root.setProperty("--bg-2", bg2);
+    root.setProperty("--panel", panel);
+    root.setProperty("--ink", text);
+    root.setProperty("--text", text);
+    root.setProperty("--text-dim", textDim);
+    root.setProperty("--accent", accent);
+    root.setProperty("--accent-soft", accentSoft);
+    root.setProperty("--line", hexToRgba(text, 0.14));
+    root.setProperty("--shadow", "0 14px 34px " + hexToRgba(text, 0.16));
+  }
+
+  ["set-color-bg","set-color-text","set-color-accent"].forEach(id=>{
+    $(id).addEventListener("input", applyColorSettings);
+  });
+
+  $("color-reset-link").addEventListener("click", ()=>{
+    $("set-color-bg").value = DEFAULT_COLORS.bg;
+    $("set-color-text").value = DEFAULT_COLORS.text;
+    $("set-color-accent").value = DEFAULT_COLORS.accent;
+    applyColorSettings();
   });
 
   /* ---------------- idle background ---------------- */
@@ -1107,6 +1187,7 @@
 
   /* ---------------- init ---------------- */
   applyOperatorSettings();
+  applyColorSettings();
   applyIdleBackground();
 })();
 </script>
