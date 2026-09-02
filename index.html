@@ -466,7 +466,7 @@
   <hr class="divider">
 
   <div class="toggle-row">
-    <span>Upload as moving GIF (instead of a still photo)</span>
+    <span>Upload as moving video (instead of a still photo)</span>
     <label class="switch"><input type="checkbox" id="set-uploadgif" checked><span class="slider-tog"></span></label>
   </div>
   <div class="help-box" style="margin-bottom:18px;">
@@ -751,63 +751,69 @@
     applyColorSettings();
   });
 
-  /* ---------------- animated GIF export (moving photo strip) ---------------- */
-  const GIF_JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js";
-  const GIF_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js";
-  const GIF_FRAME_INTERVAL_MS = 300; // ~3.3fps — a quick, punchy loop rather than smooth video; much less to encode
-  const GIF_MAX_EXPORT_WIDTH = 380;  // small export canvas — the biggest single factor in render+upload speed
-  const GIF_MAX_FRAMES = 8;          // hard cap so total render time stays short and predictable
+  /* ---------------- animated video export (moving photo strip) ---------------- */
+  // Recorded via MediaRecorder straight off a canvas — this is what actually
+  // plays smoothly on a phone/Drive preview. The old approach re-encoded a
+  // GIF frame-by-frame in JS, which is CPU-heavy and always looks choppy on
+  // playback; a real H.264/VP9 video is both faster to produce and smooth.
+  const VIDEO_FPS = 12;
+  const VIDEO_LOOPS = 2;              // play the little sequence twice so it isn't a blink-and-miss-it clip
+  const VIDEO_MAX_EXPORT_WIDTH = 480; // video compresses far better than GIF, so this can be a bit larger
 
-  let gifWorkerBlobUrl = null;
-  let gifLibLoadPromise = null;
-
-  function loadScriptTag(src){
-    return new Promise((resolve,reject)=>{
-      const s = document.createElement("script");
-      s.src = src; s.onload = resolve; s.onerror = ()=>reject(new Error("script-load-failed"));
-      document.head.appendChild(s);
-    });
+  function pickVideoMimeType(){
+    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
+    const candidates = [
+      "video/mp4;codecs=avc1", "video/mp4",                 // Safari / iOS
+      "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm" // Chrome / Firefox
+    ];
+    return candidates.find(t=> MediaRecorder.isTypeSupported(t)) || null;
   }
 
-  // Loading the worker script directly by CDN URL gets blocked by some
-  // browsers' cross-origin Worker restrictions. Fetching it and handing the
-  // library a same-origin blob URL instead sidesteps that reliably.
-  function ensureGifLib(){
-    if (!gifLibLoadPromise){
-      gifLibLoadPromise = (async ()=>{
-        if (!window.GIF) await loadScriptTag(GIF_JS_URL);
-        if (!gifWorkerBlobUrl){
-          const resp = await fetch(GIF_WORKER_URL);
-          const blob = await resp.blob();
-          gifWorkerBlobUrl = URL.createObjectURL(blob);
-        }
-      })();
-    }
-    return gifLibLoadPromise;
-  }
-
-  async function exportAnimatedGif(onProgress){
-    await ensureGifLib();
+  async function exportAnimatedVideo(onProgress){
     const { paper } = getLayoutMetrics(shots.length);
-    const scale = Math.min(1, GIF_MAX_EXPORT_WIDTH / paper.w);
-    const gifW = Math.max(1, Math.round(paper.w*scale));
-    const gifH = Math.max(1, Math.round(paper.h*scale));
-    const maxFrames = Math.min(GIF_MAX_FRAMES, Math.max(1, ...shotGifFrames.map(f=> f ? f.length : 0)));
+    const maxFrames = Math.max(1, ...shotGifFrames.map(f=> f ? f.length : 0));
+    if (maxFrames <= 1) return null; // nothing was recorded to animate — caller falls back to a still photo
+
+    const mimeType = pickVideoMimeType();
+    if (!mimeType) return null; // browser can't record video — caller falls back to a still photo
+
+    const scale = Math.min(1, VIDEO_MAX_EXPORT_WIDTH / paper.w);
+    const vw = Math.max(2, Math.round(paper.w*scale));
+    const vh = Math.max(2, Math.round(paper.h*scale));
 
     const tmp = document.createElement("canvas");
-    tmp.width = gifW; tmp.height = gifH;
+    tmp.width = vw; tmp.height = vh;
     const ctx = tmp.getContext("2d");
     setHQSmoothing(ctx);
+    // Draw one frame immediately so the recorded stream never starts on a blank canvas.
+    ctx.save(); ctx.scale(scale, scale); renderComposedFrame(ctx, shots); ctx.restore();
+
+    const stream = tmp.captureStream ? tmp.captureStream(VIDEO_FPS) : null;
+    if (!stream) return null;
 
     return new Promise((resolve, reject)=>{
-      const gif = new GIF({ workers:4, quality:28, width:gifW, height:gifH, workerScript:gifWorkerBlobUrl });
-      for(let f=0; f<maxFrames; f++){
-        ctx.clearRect(0,0,gifW,gifH);
-        ctx.save();
-        ctx.scale(scale, scale);
-        // Each cell uses its own recorded frame at this moment in time; a
-        // cell with fewer frames (e.g. recording started slightly late)
-        // just holds its last frame instead of breaking the loop's sync.
+      const chunks = [];
+      let recorder;
+      try{ recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_500_000 }); }
+      catch(e){ return reject(e); }
+
+      recorder.ondataavailable = e=>{ if (e.data && e.data.size) chunks.push(e.data); };
+      recorder.onerror = e=> reject(e.error || e);
+      recorder.onstop = ()=>{
+        if (!chunks.length) return reject(new Error("no-video-data"));
+        resolve({ blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext: mimeType.includes("mp4") ? "mp4" : "webm", mimeType: mimeType.split(";")[0] });
+      };
+
+      recorder.start();
+
+      const frameDelay = 1000/VIDEO_FPS;
+      const totalTicks = maxFrames*VIDEO_LOOPS;
+      let tickIndex = 0;
+
+      const tick = ()=>{
+        const f = tickIndex % maxFrames;
+        ctx.clearRect(0,0,vw,vh);
+        ctx.save(); ctx.scale(scale, scale);
         const sourceCanvases = shots.map((stillCanvas, i)=>{
           const frames = shotGifFrames[i];
           if (frames && frames.length) return frames[Math.min(f, frames.length-1)];
@@ -815,11 +821,17 @@
         });
         renderComposedFrame(ctx, sourceCanvases);
         ctx.restore();
-        gif.addFrame(ctx, { copy:true, delay:GIF_FRAME_INTERVAL_MS });
-      }
-      gif.on("progress", p=>{ if (onProgress) onProgress(p); });
-      gif.on("finished", blob=> resolve(blob));
-      try{ gif.render(); }catch(e){ reject(e); }
+
+        tickIndex++;
+        if (onProgress) onProgress(tickIndex/totalTicks);
+        if (tickIndex < totalTicks){
+          setTimeout(tick, frameDelay);
+        } else {
+          // small tail delay so the encoder actually captures that last frame before we stop
+          setTimeout(()=>{ try{ recorder.stop(); }catch(e){ reject(e); } }, frameDelay+120);
+        }
+      };
+      tick();
     });
   }
 
@@ -1433,23 +1445,23 @@
       return;
     }
 
-    let gifBlob = null;
+    let videoResult = null;
     if (settings.uploadGif){
       try{
         statusEl.innerHTML = '<span class="upload-spinner"></span><span>Rendering moving photo...</span>';
-        gifBlob = await exportAnimatedGif(p=>{
+        videoResult = await exportAnimatedVideo(p=>{
           statusEl.innerHTML = `<span class="upload-spinner"></span><span>Rendering moving photo... ${Math.round(p*100)}%</span>`;
         });
       }catch(e){
-        console.warn("GIF export failed, falling back to still photo:", e);
-        gifBlob = null;
+        console.warn("Video export failed, falling back to still photo:", e);
+        videoResult = null;
       }
     }
 
     try{
       statusEl.innerHTML = '<span class="upload-spinner"></span><span>Uploading...</span>';
-      const link = gifBlob
-        ? await uploadToDrive(token, gifBlob, "image/gif", "gif")
+      const link = videoResult
+        ? await uploadToDrive(token, videoResult.blob, videoResult.mimeType, videoResult.ext)
         : await uploadToDrive(token, composedBlob, "image/jpeg", "jpg");
       statusEl.innerHTML = "";
       renderQR(link);
